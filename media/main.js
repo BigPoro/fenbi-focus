@@ -321,6 +321,10 @@ function renderHome() {
         ${state.subjects.map((item) => `<option value="${escapeText(item.id)}" ${item.id === state.subjectId ? 'selected' : ''}>${escapeText(item.label)}</option>`).join('')}
       </select>
     </section>
+    ${state.subject?.id === 'shenlun' ? `<section class="section-card">
+      <div class="section-title"><h2>申论功能提示</h2><small>粉笔官网限制</small></div>
+      <p class="muted compact-copy">申论交卷及官方解析受粉笔官网会员和练习提交状态限制；未开通对应 VIP 时，交卷与解析无法使用。本扩展可用于题目阅读和作答整理。</p>
+    </section>` : ''}
     ${state.subject?.answerMode !== 'interview' ? `<section class="question-count-panel">
       <label for="question-count-select">每组题数</label>
       <select id="question-count-select" aria-label="设置每组题数">
