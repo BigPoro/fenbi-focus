@@ -649,6 +649,38 @@ button:disabled {
   margin-bottom: 0;
 }
 
+.question-highlight-controls {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  margin-top: 8px;
+  min-height: 28px;
+}
+
+.highlight-float-menu {
+  position: fixed;
+  z-index: 30;
+  transform: translateX(-50%);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  padding: 3px;
+  background: var(--vscode-editorWidget-background, var(--surface-raised));
+  box-shadow: 0 4px 12px color-mix(in srgb, #000 22%, transparent);
+}
+
+.question-highlight-clear {
+  min-height: 26px;
+  padding-block: 2px;
+  font-size: 0.85em;
+}
+
+mark.question-highlight {
+  border-radius: 2px;
+  padding: 0 1px;
+  color: inherit;
+  background: color-mix(in srgb, #ffd54f 62%, transparent);
+}
+
 /* 图片与公式样式 */
 .rich-text img,
 .question-card img,

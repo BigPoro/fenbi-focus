@@ -20,6 +20,7 @@ const state = {
   questionIndex: 0,
   answers: {},
   drafts: {},
+  highlights: {},
   loading: '',
   error: '',
   compact: true,
@@ -123,6 +124,118 @@ function normalizeImageUrl(value) {
 function plainText(html) {
   const documentValue = new DOMParser().parseFromString(String(html || ''), 'text/html');
   return (documentValue.body.textContent || '').replace(/\s+/g, ' ').trim();
+}
+
+function questionHighlightKey(question) {
+  const id = question?.globalId ?? question?.questionId ?? question?.id;
+  return String(id == null || id === '' ? `index:${state.questionIndex}` : id);
+}
+
+function normalizeHighlightRanges(ranges) {
+  const sorted = (Array.isArray(ranges) ? ranges : [])
+    .map((range) => ({ start: Number(range?.start), end: Number(range?.end) }))
+    .filter((range) => Number.isInteger(range.start) && Number.isInteger(range.end) && range.end > range.start)
+    .sort((left, right) => left.start - right.start || left.end - right.end);
+  return sorted.reduce((merged, range) => {
+    const previous = merged[merged.length - 1];
+    if (previous && range.start <= previous.end) {
+      previous.end = Math.max(previous.end, range.end);
+    } else {
+      merged.push(range);
+    }
+    return merged;
+  }, []);
+}
+
+function textOffsetWithin(root, container, offset) {
+  const prefix = document.createRange();
+  prefix.setStart(root, 0);
+  prefix.setEnd(container, offset);
+  return prefix.toString().length;
+}
+
+function selectedQuestionTextRange() {
+  const selection = window.getSelection();
+  const root = app.querySelector('.question-content');
+  if (!root || !selection || selection.rangeCount !== 1) return null;
+  const range = selection.getRangeAt(0);
+  if (range.collapsed || !root.contains(range.startContainer) || !root.contains(range.endContainer)) return null;
+  try {
+    const start = textOffsetWithin(root, range.startContainer, range.startOffset);
+    const end = textOffsetWithin(root, range.endContainer, range.endOffset);
+    return end > start ? { start, end } : null;
+  } catch {
+    return null;
+  }
+}
+
+function highlightRangesFor(question) {
+  return normalizeHighlightRanges(state.highlights[questionHighlightKey(question)]);
+}
+
+function applyHighlights(root, ranges) {
+  const normalized = normalizeHighlightRanges(ranges);
+  if (!normalized.length) return;
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  const textNodes = [];
+  let textNode;
+  while ((textNode = walker.nextNode())) textNodes.push(textNode);
+  let nodeStart = 0;
+  textNodes.forEach((node) => {
+    const value = node.nodeValue || '';
+    const nodeEnd = nodeStart + value.length;
+    const overlaps = normalized.filter((range) => range.start < nodeEnd && range.end > nodeStart);
+    if (overlaps.length) {
+      const fragment = document.createDocumentFragment();
+      let cursor = 0;
+      overlaps.forEach((range) => {
+        const start = Math.max(0, range.start - nodeStart);
+        const end = Math.min(value.length, range.end - nodeStart);
+        if (start > cursor) fragment.append(value.slice(cursor, start));
+        const mark = document.createElement('mark');
+        mark.className = 'question-highlight';
+        mark.textContent = value.slice(start, end);
+        fragment.append(mark);
+        cursor = end;
+      });
+      if (cursor < value.length) fragment.append(value.slice(cursor));
+      node.replaceWith(fragment);
+    }
+    nodeStart = nodeEnd;
+  });
+}
+
+function restoreQuestionHighlights() {
+  const question = currentQuestion();
+  const root = app.querySelector('.question-content');
+  if (question && root) applyHighlights(root, highlightRangesFor(question));
+}
+
+function renderHighlightControls(question) {
+  const hasHighlights = highlightRangesFor(question).length > 0;
+  return `<div class="question-highlight-controls" aria-label="题干标注">
+    <button class="text-button question-highlight-clear" type="button" data-action="clear-highlights" ${hasHighlights ? '' : 'disabled'}>清除本题标注</button>
+  </div>`;
+}
+
+function updateHighlightControls() {
+  const menu = app.querySelector('#highlight-float-menu');
+  const selection = window.getSelection();
+  const hasSelection = Boolean(selectedQuestionTextRange());
+  if (!menu || !selection || !hasSelection) {
+    if (menu) menu.hidden = true;
+    return;
+  }
+  const rect = selection.getRangeAt(0).getBoundingClientRect();
+  if (rect.width === 0 && rect.height === 0) {
+    menu.hidden = true;
+    return;
+  }
+  menu.hidden = false;
+  const halfWidth = menu.offsetWidth / 2;
+  const left = Math.min(Math.max(rect.left + rect.width / 2, halfWidth + 8), window.innerWidth - halfWidth - 8);
+  menu.style.left = `${left}px`;
+  menu.style.top = `${Math.max(8, rect.top - menu.offsetHeight - 8)}px`;
 }
 
 function imageMarkdown(html) {
@@ -394,6 +507,7 @@ function renderQuestion() {
     ${renderMaterial(question, questions)}
     <article class="question-card">
       <div class="rich-text question-content">${sanitizeHtml(question.content)}</div>
+      ${renderHighlightControls(question)}
       ${state.exercise.answerMode === 'essay' ? renderEssayAnswer() : renderObjectiveAnswer(question, selected)}
     </article>
     ${renderQuestionNav(questions.length)}`;
@@ -426,6 +540,7 @@ function renderSolution() {
     ${renderMaterial(solution, solutions)}
     <article class="question-card">
       <div class="rich-text question-content">${sanitizeHtml(solution.content)}</div>
+      ${renderHighlightControls(solution)}
       ${!isEssay && !isInterview ? renderReviewOptions(solution, userAnswer, correctAnswer) : ''}
       ${isEssay && userAnswer ? `<section class="my-essay"><h3>我的作答</h3><p>${escapeText(userAnswer)}</p></section>` : ''}
       <section class="solution-block"><h3>${isInterview ? '参考思路' : '解析'}</h3><div class="rich-text">${sanitizeHtml(solution.solution)}</div></section>
@@ -505,9 +620,14 @@ function render() {
         : state.toolView === 'papers'
           ? renderPaperCatalog()
           : renderHome();
-  app.innerHTML = `${state.loading ? `<div class="status-banner loading"><span></span>${escapeText(state.loading)}</div>` : ''}${state.error ? `<div class="status-banner error">${escapeText(state.error)}</div>` : ''}${content}`;
+  const floatingHighlightMenu = state.exercise || state.solutions
+    ? '<div id="highlight-float-menu" class="highlight-float-menu" role="toolbar" aria-label="选中文字操作" hidden><button class="primary compact-button" type="button" data-action="highlight-selection">高亮</button></div>'
+    : '';
+  app.innerHTML = `${state.loading ? `<div class="status-banner loading"><span></span>${escapeText(state.loading)}</div>` : ''}${state.error ? `<div class="status-banner error">${escapeText(state.error)}</div>` : ''}${content}${floatingHighlightMenu}`;
   document.body.classList.toggle('has-question-nav', Boolean(state.exercise || state.solutions));
   enhanceRenderedImages();
+  restoreQuestionHighlights();
+  updateHighlightControls();
 }
 
 function buildNote() {
@@ -568,6 +688,12 @@ app.addEventListener('input', (event) => {
   }
 });
 
+document.addEventListener('selectionchange', updateHighlightControls);
+
+app.addEventListener('mousedown', (event) => {
+  if (event.target.closest('button[data-action="highlight-selection"]')) event.preventDefault();
+});
+
 app.addEventListener('click', (event) => {
   const button = event.target.closest('button[data-action]');
   if (!button) return;
@@ -608,6 +734,7 @@ app.addEventListener('click', (event) => {
     state.toolView = '';
     state.answers = {};
     state.drafts = {};
+    state.highlights = {};
     state.questionIndex = 0;
     render();
   }
@@ -622,6 +749,24 @@ app.addEventListener('click', (event) => {
     if (answer) {
       state.answers[state.questionIndex] = answer;
       post('answer', { questionIndex: state.questionIndex, answer });
+      render();
+    }
+  }
+  if (action === 'highlight-selection') {
+    const range = selectedQuestionTextRange();
+    const question = currentQuestion();
+    if (range && question) {
+      const key = questionHighlightKey(question);
+      state.highlights[key] = normalizeHighlightRanges([...(state.highlights[key] || []), range]);
+      window.getSelection()?.removeAllRanges();
+      render();
+    }
+  }
+  if (action === 'clear-highlights') {
+    const question = currentQuestion();
+    if (question) {
+      delete state.highlights[questionHighlightKey(question)];
+      window.getSelection()?.removeAllRanges();
       render();
     }
   }
@@ -660,12 +805,14 @@ window.addEventListener('message', (event) => {
     state.toolView = '';
     state.answers = {};
     state.drafts = {};
+    state.highlights = {};
   }
   if (message.command === 'exercise') {
     state.exercise = message.data;
     state.solutions = null;
     state.answers = {};
     state.drafts = {};
+    state.highlights = {};
     state.questionIndex = 0;
     state.toolView = '';
     state.loading = '';
@@ -674,6 +821,12 @@ window.addEventListener('message', (event) => {
     state.loading = '';
   }
   if (message.command === 'solution') {
+    const keepHighlights = Boolean(
+      state.exercise?.combineKey &&
+      message.data?.combineKey &&
+      state.exercise.combineKey === message.data.combineKey
+    );
+    if (!keepHighlights) state.highlights = {};
     state.exercise = message.data;
     state.solutions = { solutions: message.data.solutions || [] };
     state.questionIndex = 0;
