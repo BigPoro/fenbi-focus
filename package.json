@@ -1,0 +1,93 @@
+{
+  "name": "fenbi-focus",
+  "displayName": "公考专注刷题",
+  "description": "在 VS Code 中以低干扰方式使用个人粉笔账号刷题，并安全整理错题。",
+  "version": "0.3.13",
+  "publisher": "local-exam-tools",
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.96.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "keywords": [
+    "公务员考试",
+    "行测",
+    "错题",
+    "学习"
+  ],
+  "main": "./extension.js",
+  "activationEvents": [
+    "onView:fenbiFocus.practiceView",
+    "onCommand:fenbiFocus.setCookie",
+    "onCommand:fenbiFocus.clearCookie",
+    "onCommand:fenbiFocus.refresh"
+  ],
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "fenbiFocus",
+          "title": "专注刷题",
+          "icon": "media/icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "fenbiFocus": [
+        {
+          "type": "webview",
+          "id": "fenbiFocus.practiceView",
+          "name": "备考练习"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "fenbiFocus.setCookie",
+        "title": "公考专注刷题：设置粉笔 Cookie"
+      },
+      {
+        "command": "fenbiFocus.clearCookie",
+        "title": "公考专注刷题：清除粉笔 Cookie"
+      },
+      {
+        "command": "fenbiFocus.refresh",
+        "title": "公考专注刷题：刷新"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "fenbiFocus.refresh",
+          "group": "navigation",
+          "when": "view == fenbiFocus.practiceView"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "公考专注刷题",
+      "properties": {
+        "fenbiFocus.fontSize": {
+          "type": "number",
+          "default": 14,
+          "minimum": 12,
+          "maximum": 22,
+          "description": "题目字号（像素）"
+        },
+        "fenbiFocus.compact": {
+          "type": "boolean",
+          "default": true,
+          "description": "使用紧凑、低干扰排版"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "test": "node --test",
+    "check": "node --check extension.js && node --check src/fenbiClient.js && node --check src/contracts.js && node --check src/subjects.js && node --check media/main.js",
+    "package": "npx @vscode/vsce package --no-dependencies --allow-missing-repository"
+  }
+}
+

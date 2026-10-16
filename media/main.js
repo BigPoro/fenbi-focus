@@ -1,0 +1,642 @@
+'use strict';
+
+const vscode = acquireVsCodeApi();
+const app = document.getElementById('app');
+const state = {
+  authenticated: false,
+  subjects: [],
+  subjectId: 'xingce',
+  subject: null,
+  categories: [],
+  history: [],
+  cache: null,
+  toolView: '',
+  wrongCategories: [],
+  paperLabels: [],
+  papers: [],
+  selectedLabelId: null,
+  exercise: null,
+  solutions: null,
+  questionIndex: 0,
+  answers: {},
+  drafts: {},
+  loading: '',
+  error: '',
+  compact: true,
+  fontSize: 14
+};
+
+const ALLOWED_TAGS = new Set(['P', 'DIV', 'SPAN', 'BR', 'STRONG', 'B', 'EM', 'I', 'U', 'SUB', 'SUP', 'UL', 'OL', 'LI', 'TABLE', 'THEAD', 'TBODY', 'TR', 'TD', 'TH', 'IMG']);
+const OPTION_LABELS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'.split('');
+
+function post(command, payload = {}) {
+  vscode.postMessage({ command, ...payload });
+}
+
+function escapeText(value) {
+  return String(value ?? '')
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#39;');
+}
+
+function isFormulaImage(url, alt = '', className = '') {
+  const target = String(url || '');
+  return /\/formulas\?/i.test(target) ||
+    /\/formula\//i.test(target) ||
+    /latex/i.test(target) ||
+    String(className || '').includes('formula') ||
+    /公式|math/i.test(String(alt || ''));
+}
+
+function sanitizeHtml(input) {
+  const parser = new DOMParser();
+  const documentValue = parser.parseFromString(`<body>${String(input || '')}</body>`, 'text/html');
+  for (const node of [...documentValue.body.querySelectorAll('*')]) {
+    if (!ALLOWED_TAGS.has(node.tagName)) {
+      node.replaceWith(...node.childNodes);
+      continue;
+    }
+    if (node.tagName === 'IMG') {
+      const rawSrc = node.getAttribute('src') ||
+        node.getAttribute('data-src') ||
+        node.getAttribute('data-original') ||
+        node.getAttribute('data-url') ||
+        node.getAttribute('_src') ||
+        '';
+      const normalizedImageSource = normalizeImageUrl(rawSrc);
+      const alt = node.getAttribute('alt') || '';
+      const title = node.getAttribute('title') || '';
+      const isFormula = isFormulaImage(normalizedImageSource, alt, node.className);
+
+      for (const attribute of [...node.attributes]) {
+        node.removeAttribute(attribute.name);
+      }
+
+      if (normalizedImageSource) {
+        node.setAttribute('src', normalizedImageSource);
+      }
+      if (alt) node.setAttribute('alt', alt);
+      if (title) node.setAttribute('title', title);
+      node.setAttribute('referrerpolicy', 'no-referrer');
+      node.className = isFormula ? 'fenbi-formula-image' : 'fenbi-content-image';
+      continue;
+    }
+
+    for (const attribute of [...node.attributes]) {
+      const keepTableSpan = ['TD', 'TH'].includes(node.tagName) && ['colspan', 'rowspan'].includes(attribute.name);
+      if (!keepTableSpan) {
+        node.removeAttribute(attribute.name);
+      }
+    }
+  }
+  return documentValue.body.innerHTML;
+}
+
+function normalizeImageUrl(value) {
+  if (!value) return '';
+  let url = String(value).trim();
+  if (!url) return '';
+  if (url.startsWith('https:////')) {
+    return 'https://' + url.slice(10);
+  }
+  if (url.startsWith('http:////')) {
+    return 'https://' + url.slice(9);
+  }
+  if (url.startsWith('//')) {
+    return 'https:' + url;
+  }
+  if (url.startsWith('http://') && !url.includes('localhost')) {
+    return 'https://' + url.slice(7);
+  }
+  if (/^https?:\/\//i.test(url)) {
+    return url;
+  }
+  if (/^data:image\/(?:png|jpe?g|gif|webp|svg\+xml);base64,/i.test(url) || url.startsWith('blob:')) {
+    return url;
+  }
+  return url;
+}
+
+function plainText(html) {
+  const documentValue = new DOMParser().parseFromString(String(html || ''), 'text/html');
+  return (documentValue.body.textContent || '').replace(/\s+/g, ' ').trim();
+}
+
+function imageMarkdown(html) {
+  const documentValue = new DOMParser().parseFromString(String(html || ''), 'text/html');
+  const urls = [...documentValue.images]
+    .map((image) => normalizeImageUrl(
+      image.getAttribute('src') ||
+      image.getAttribute('data-src') ||
+      image.getAttribute('data-original') ||
+      image.getAttribute('data-url') ||
+      image.getAttribute('_src') ||
+      ''
+    ))
+    .filter((url) => /^https?:\/\//i.test(url));
+  return [...new Set(urls)].map((url, index) => `![题图 ${index + 1}](${url})`);
+}
+
+function currentItems() {
+  return state.solutions?.solutions || state.exercise?.questions || [];
+}
+
+function currentQuestion() {
+  return currentItems()[state.questionIndex];
+}
+
+function remoteAnswer(index) {
+  const question = currentItems()[index];
+  const answerMap = state.exercise?.userAnswers || {};
+  const answer = answerMap[String(question?.globalId || question?.id || '')]?.answer
+    || answerMap[index]?.answer
+    || question?.userAnswer;
+  return answer?.choice ?? answer?.answer ?? '';
+}
+
+function getUserAnswer(index) {
+  if (state.answers[index] !== undefined) return String(state.answers[index]);
+  return String(remoteAnswer(index) ?? '');
+}
+
+function formatDate(timestamp) {
+  const date = new Date(Number(timestamp));
+  if (Number.isNaN(date.getTime())) return '时间未知';
+  return new Intl.DateTimeFormat('zh-CN', { year: 'numeric', month: '2-digit', day: '2-digit' }).format(date);
+}
+
+function materialForQuestion(question) {
+  if (question?.materialContent) return question.materialContent;
+  const materials = state.exercise?.materials || [];
+  const indexes = Array.isArray(question?.materialIndexes) ? question.materialIndexes : [];
+  if (indexes.length) {
+    return indexes.map((index) => materials[index]?.content || '').filter(Boolean).join('');
+  }
+  const keys = Array.isArray(question?.materialKeys) ? question.materialKeys.map(String) : [];
+  return materials.filter((item) => keys.includes(String(item?.globalId))).map((item) => item.content || '').join('');
+}
+
+function optionItems(question) {
+  const accessories = Array.isArray(question?.accessories) ? question.accessories : [];
+  const options = accessories[0]?.options || question?.options;
+  return Array.isArray(options) ? options : [];
+}
+
+function renderCategory(category, depth = 0, parentNames = []) {
+  const children = Array.isArray(category.children) ? category.children : [];
+  const typeName = [...parentNames, category.name].filter(Boolean).join(' / ');
+  if (children.length === 0) {
+    return `<li class="category-item category-level-${Math.min(depth, 3)}">
+      <button class="category-row" data-action="start" data-id="${Number(category.id)}" data-question-type="${escapeText(typeName)}">
+        <span class="category-name">${escapeText(category.name)}</span>
+        <span class="category-meta">${Number(category.answerCount || 0)}/${Number(category.count || 0)} <i>›</i></span>
+      </button>
+    </li>`;
+  }
+  return `<li class="category-group category-level-${Math.min(depth, 3)}">
+    <details ${depth === 0 ? 'open' : ''}>
+      <summary><span class="category-name">${escapeText(category.name)}</span><small>${children.length} 项</small></summary>
+      <ul>${children.map((item) => renderCategory(item, depth + 1, [...parentNames, category.name])).join('')}</ul>
+    </details>
+  </li>`;
+}
+
+function renderWrongCategory(category, depth = 0, parentNames = []) {
+  const children = Array.isArray(category.children) ? category.children : [];
+  const typeName = [...parentNames, category.name].filter(Boolean).join(' / ');
+  if (!children.length) {
+    return `<li class="category-item category-level-${Math.min(depth, 3)}"><button class="category-row" data-action="open-wrong-category" data-id="${Number(category.id)}" data-question-ids="${escapeText((category.questionIds || []).join(','))}" data-question-type="${escapeText(typeName)}" ${Number(category.id) > 0 && Number(category.count || 0) ? '' : 'disabled'}>
+      <span class="category-name">${escapeText(category.name)}</span>
+      <span class="category-meta">${Number(category.count || 0)} 题 <i>›</i></span>
+    </button></li>`;
+  }
+  return `<li class="category-group category-level-${Math.min(depth, 3)}"><details ${depth === 0 ? 'open' : ''}>
+    <summary><span class="category-name">${escapeText(category.name)}</span><small>${Number(category.count || 0)} 题</small></summary>
+    <ul>${children.map((item) => renderWrongCategory(item, depth + 1, [...parentNames, category.name])).join('')}</ul>
+  </details></li>`;
+}
+
+function renderWrongBook() {
+  return `<header class="practice-header"><button class="text-button" data-action="home">‹ 目录</button><strong>我的错题</strong><span></span></header>
+    <section class="section-card category-card">
+      <div class="section-title"><h2>按题型复盘</h2><small>最近错题优先</small></div>
+      ${state.wrongCategories.length
+        ? `<ul class="category-list">${state.wrongCategories.map((item) => renderWrongCategory(item)).join('')}</ul>`
+        : '<p class="muted compact-copy">当前科目没有可复盘的错题。</p>'}
+    </section>`;
+}
+
+function renderPaperCatalog() {
+  return `<header class="practice-header"><button class="text-button" data-action="home">‹ 目录</button><strong>往年真题</strong><span></span></header>
+    <section class="section-card paper-filter">
+      <div class="section-title"><h2>行测真题 PDF</h2><small>单份下载</small></div>
+      <div class="paper-controls">
+        <select id="paper-label-select" aria-label="选择真题地区">
+          <option value="">选择地区或考试分类</option>
+          ${state.paperLabels.map((item) => `<option value="${item.id}" ${Number(state.selectedLabelId) === Number(item.id) ? 'selected' : ''}>${escapeText(item.name)}（${item.paperCount}）</option>`).join('')}
+        </select>
+        <p class="muted">若粉笔尚未生成对应练习，下载前会再次确认创建练习记录。</p>
+      </div>
+      ${state.selectedLabelId && !state.papers.length ? '<p class="muted compact-copy">该分类暂无可下载试卷。</p>' : ''}
+      <div class="paper-list">${state.papers.map((paper, index) => `<div class="paper-row">
+        <span title="${escapeText(paper.name)}">${escapeText(paper.name)}</span>
+        <button data-action="download-paper" data-index="${index}">下载</button>
+      </div>`).join('')}</div>
+    </section>`;
+}
+
+function renderHistory() {
+  if (state.subject?.answerMode === 'interview') {
+    return '<p class="muted compact-copy">面试题以分类浏览为主，不显示交卷历史。</p>';
+  }
+  if (!state.history.length) {
+    return '<p class="muted compact-copy">最近没有练习记录。</p>';
+  }
+  return `<div class="history-list">${state.history.map((item, index) => {
+    const completed = Number(item.status) === 1;
+    const score = completed && item.questionCount != null
+      ? `${item.correctCount ?? '—'}/${item.questionCount}`
+      : '未完成';
+    return `<button class="history-row" data-action="open-history" data-index="${index}">
+      <span class="history-main">
+        <strong>${escapeText(item.name)}</strong>
+        <small>${formatDate(item.createTime)} · ${score}</small>
+      </span>
+      <span class="history-action">${completed ? '复盘' : '继续'} ›</span>
+    </button>`;
+  }).join('')}</div>`;
+}
+
+function renderHome() {
+  if (!state.authenticated) {
+    return `<section class="empty-card">
+      <div class="empty-icon">◎</div>
+      <h2>连接个人粉笔账号</h2>
+      <p>Cookie 仅保存在 VS Code SecretStorage，不进入设置文件或题目页面。</p>
+      <button class="primary" data-action="set-cookie">设置 Cookie</button>
+    </section>`;
+  }
+  return `<header class="app-header">
+      <div class="identity"><strong>专注刷题</strong><small>${escapeText(state.user?.name || '已登录')}</small></div>
+      <div class="icon-actions">
+        <button title="刷新" aria-label="刷新" data-action="refresh">↻</button>
+        <button title="账号设置" aria-label="账号设置" data-action="clear-cookie">⋯</button>
+      </div>
+    </header>
+    <section class="subject-panel">
+      <label for="subject-select">科目</label>
+      <select id="subject-select" aria-label="选择科目">
+        ${state.subjects.map((item) => `<option value="${escapeText(item.id)}" ${item.id === state.subjectId ? 'selected' : ''}>${escapeText(item.label)}</option>`).join('')}
+      </select>
+    </section>
+    <section class="quick-actions" aria-label="常用练习">
+      <button data-action="open-wrong-book" ${state.subject?.answerMode === 'interview' ? 'disabled' : ''}><strong>我的错题</strong><small>按题型复盘</small></button>
+      <button data-action="quick-exercise" ${state.subject?.answerMode === 'interview' ? 'disabled' : ''}><strong>快速练习</strong><small>直接开始</small></button>
+      <button data-action="smart-exercise" ${state.subject?.answerMode === 'interview' ? 'disabled' : ''}><strong>智能组卷</strong><small>全部年份</small></button>
+      <button data-action="open-papers"><strong>往年真题</strong><small>行测 PDF</small></button>
+    </section>
+    ${state.cache ? `<button class="resume-card" data-action="open-cache">
+      <span><small>未完成练习</small><strong>继续上次进度</strong></span><i>›</i>
+    </button>` : ''}
+    <details class="section-card history-card">
+      <summary><span>练习历史</span><small>最近 ${state.history.length} 条</small></summary>
+      ${renderHistory()}
+    </details>
+    <section class="section-card category-card">
+      <div class="section-title"><h2>专项练习</h2><small>${escapeText(state.subject?.label || '')}</small></div>
+      <ul class="category-list">${state.categories.map((item) => renderCategory(item)).join('')}</ul>
+    </section>`;
+}
+
+function renderObjectiveAnswer(question, selected) {
+  const options = optionItems(question);
+  return `<div class="options">
+    ${options.map((option, index) => `<button class="option ${selected === String(index) ? 'selected' : ''}" data-action="answer" data-choice="${index}">
+      <b>${OPTION_LABELS[index] || index + 1}</b><span class="rich-text">${sanitizeHtml(option)}</span>
+    </button>`).join('')}
+  </div>`;
+}
+
+function renderEssayAnswer() {
+  const saved = getUserAnswer(state.questionIndex);
+  const draft = state.drafts[state.questionIndex] ?? saved;
+  return `<div class="essay-answer">
+    <label for="essay-input">我的作答</label>
+    <textarea id="essay-input" rows="10" placeholder="在这里整理申论作答…">${escapeText(draft)}</textarea>
+    <button class="primary" data-action="save-essay" ${String(draft).trim() ? '' : 'disabled'}>保存本题作答</button>
+  </div>`;
+}
+
+function renderQuestion() {
+  const questions = state.exercise?.questions || [];
+  const question = questions[state.questionIndex];
+  if (!question) {
+    return '<section class="empty-card"><p>没有可展示的题目。</p><button data-action="home">返回目录</button></section>';
+  }
+  const selected = getUserAnswer(state.questionIndex);
+  const material = materialForQuestion(question);
+  return `<header class="practice-header">
+      <button class="text-button" data-action="home">‹ 目录</button>
+      <span><strong>${state.questionIndex + 1}</strong> / ${questions.length}</span>
+      <button class="primary compact-button" data-action="submit">交卷</button>
+    </header>
+    ${material ? `<details class="material-card" open><summary>题目材料</summary><div class="rich-text">${sanitizeHtml(material)}</div></details>` : ''}
+    <article class="question-card">
+      <div class="rich-text question-content">${sanitizeHtml(question.content)}</div>
+      ${state.exercise.answerMode === 'essay' ? renderEssayAnswer() : renderObjectiveAnswer(question, selected)}
+    </article>
+    ${renderQuestionNav(questions.length)}`;
+}
+
+function solutionAnswer(solution) {
+  return solution?.correctAnswer?.choice == null ? '' : String(solution.correctAnswer.choice);
+}
+
+function renderSolution() {
+  const solutions = state.solutions?.solutions || [];
+  const solution = solutions[state.questionIndex];
+  if (!solution) {
+    return '<section class="empty-card"><p>解析数据为空。</p><button data-action="home">返回目录</button></section>';
+  }
+  const userAnswer = getUserAnswer(state.questionIndex);
+  const correctAnswer = solutionAnswer(solution);
+  const isInterview = state.exercise?.answerMode === 'interview';
+  const isEssay = state.exercise?.answerMode === 'essay';
+  const isCorrect = !isEssay && !isInterview && userAnswer !== '' && userAnswer === correctAnswer;
+  const material = materialForQuestion(solution);
+  return `<header class="practice-header">
+      <button class="text-button" data-action="home">‹ 目录</button>
+      <span><strong>${state.questionIndex + 1}</strong> / ${solutions.length}</span>
+      ${state.exercise?.exerciseId ? '<button class="text-button" data-action="open-fenbi">官网 ↗</button>' : '<span></span>'}
+    </header>
+    ${!isEssay && !isInterview ? `<section class="result-strip ${isCorrect ? 'correct' : 'wrong'}">
+      <strong>${isCorrect ? '回答正确' : '需要复盘'}</strong>
+      <span>我的答案 ${userAnswer === '' ? '—' : OPTION_LABELS[Number(userAnswer)] || userAnswer} · 正确答案 ${OPTION_LABELS[Number(correctAnswer)] || correctAnswer}</span>
+    </section>` : ''}
+    ${material ? `<details class="material-card"><summary>题目材料</summary><div class="rich-text">${sanitizeHtml(material)}</div></details>` : ''}
+    <article class="question-card">
+      <div class="rich-text question-content">${sanitizeHtml(solution.content)}</div>
+      ${isEssay && userAnswer ? `<section class="my-essay"><h3>我的作答</h3><p>${escapeText(userAnswer)}</p></section>` : ''}
+      <section class="solution-block"><h3>${isInterview ? '参考思路' : '解析'}</h3><div class="rich-text">${sanitizeHtml(solution.solution)}</div></section>
+      <button class="secondary full" data-action="copy-note">复制题干，稍后存飞书</button>
+    </article>
+    ${renderQuestionNav(solutions.length)}`;
+}
+
+function renderQuestionNav(total) {
+  return `<nav class="question-nav">
+    <button data-action="previous" ${state.questionIndex === 0 ? 'disabled' : ''}>上一题</button>
+    <div class="progress-dots">${Array.from({ length: total }, (_, index) => `<button title="第 ${index + 1} 题" data-action="goto" data-index="${index}" class="dot ${getUserAnswer(index) !== '' ? 'answered' : ''} ${index === state.questionIndex ? 'current' : ''}">${index + 1}</button>`).join('')}</div>
+    <button data-action="next" ${state.questionIndex >= total - 1 ? 'disabled' : ''}>下一题</button>
+  </nav>`;
+}
+
+function enhanceRenderedImages() {
+  const images = app.querySelectorAll('img');
+  images.forEach((img) => {
+    if (img.dataset.fenbiEnhanced === 'true') return;
+    img.dataset.fenbiEnhanced = 'true';
+
+    img.removeAttribute('width');
+    img.removeAttribute('height');
+
+    const rawSrc = img.getAttribute('src') || '';
+    const normalized = normalizeImageUrl(rawSrc);
+    if (normalized && normalized !== rawSrc) {
+      img.setAttribute('src', normalized);
+    }
+
+    const isFormula = isFormulaImage(normalized, img.alt, img.className);
+    if (isFormula) {
+      img.classList.add('fenbi-formula-image');
+    } else {
+      img.classList.add('fenbi-content-image');
+    }
+
+    const handleError = () => {
+      let errorBadge = img.nextElementSibling;
+      if (!errorBadge || !errorBadge.classList.contains('fenbi-img-error-badge')) {
+        errorBadge = document.createElement('span');
+        errorBadge.className = 'fenbi-img-error-badge';
+        errorBadge.innerHTML = `
+          <span>⚠️ 图片加载失败</span>
+          <span class="error-url" title="${escapeText(img.src)}">${escapeText(img.src)}</span>
+        `;
+        img.parentNode && img.parentNode.insertBefore(errorBadge, img.nextSibling);
+      }
+    };
+
+    const handleLoad = () => {
+      const errorBadge = img.nextElementSibling;
+      if (errorBadge && errorBadge.classList.contains('fenbi-img-error-badge')) {
+        errorBadge.remove();
+      }
+    };
+
+    img.addEventListener('error', handleError);
+    img.addEventListener('load', handleLoad);
+
+    if (img.complete && img.naturalWidth === 0 && img.src) {
+      handleError();
+    }
+  });
+}
+
+function render() {
+  document.documentElement.style.setProperty('--question-font-size', `${Number(state.fontSize || 14)}px`);
+  document.body.classList.toggle('compact', Boolean(state.compact));
+  const content = state.solutions
+    ? renderSolution()
+    : state.exercise
+      ? renderQuestion()
+      : state.toolView === 'wrongBook'
+        ? renderWrongBook()
+        : state.toolView === 'papers'
+          ? renderPaperCatalog()
+          : renderHome();
+  app.innerHTML = `${state.loading ? `<div class="status-banner loading"><span></span>${escapeText(state.loading)}</div>` : ''}${state.error ? `<div class="status-banner error">${escapeText(state.error)}</div>` : ''}${content}`;
+  enhanceRenderedImages();
+}
+
+function buildNote() {
+  const solution = currentQuestion();
+  if (!solution) return '';
+  const questionType = questionTypeFor(solution);
+  const images = imageMarkdown(solution.content);
+  return [
+    `题目类型：${questionType}`,
+    `关键题干：${plainText(solution.content)}`,
+    ...images
+  ].filter(Boolean).join('\n');
+}
+
+function questionTypeFor(question) {
+  const rawType = [
+    question?.questionTypeName,
+    question?.categoryName,
+    question?.keypointName,
+    question?.category?.name,
+    question?.keypoint?.name,
+    state.exercise?.questionType
+  ].find((value) => typeof value === 'string' && value.trim());
+  return rawType ? rawType.trim() : '待分类';
+}
+
+app.addEventListener('change', (event) => {
+  if (event.target.id === 'subject-select') {
+    post('changeSubject', { subjectId: event.target.value });
+  }
+  if (event.target.id === 'paper-label-select' && event.target.value) {
+    const label = state.paperLabels.find((item) => Number(item.id) === Number(event.target.value));
+    post('loadPapers', { labelId: Number(event.target.value), paperCount: label?.paperCount || 50 });
+  }
+});
+
+app.addEventListener('input', (event) => {
+  if (event.target.id === 'essay-input') {
+    state.drafts[state.questionIndex] = event.target.value;
+    const saveButton = app.querySelector('button[data-action="save-essay"]');
+    if (saveButton) saveButton.disabled = !event.target.value.trim();
+  }
+});
+
+app.addEventListener('click', (event) => {
+  const button = event.target.closest('button[data-action]');
+  if (!button) return;
+  const action = button.dataset.action;
+  state.error = '';
+  if (action === 'set-cookie') post('setCookie');
+  if (action === 'clear-cookie') post('clearCookie');
+  if (action === 'refresh') post('refresh', { subjectId: state.subjectId });
+  if (action === 'open-wrong-book') post('openWrongBook', { subjectId: state.subjectId });
+  if (action === 'open-wrong-category') post('openWrongCategory', {
+    subjectId: state.subjectId,
+    categoryId: Number(button.dataset.id),
+    questionIds: String(button.dataset.questionIds || '').split(',').filter(Boolean),
+    questionType: String(button.dataset.questionType || '')
+  });
+  if (action === 'quick-exercise') post('startQuickExercise', { subjectId: state.subjectId });
+  if (action === 'smart-exercise') post('startSmartExercise', { subjectId: state.subjectId });
+  if (action === 'open-papers') post('openPaperCatalog');
+  if (action === 'download-paper') {
+    const paper = state.papers[Number(button.dataset.index)];
+    if (paper) post('downloadPaper', { paper });
+  }
+  if (action === 'start') post('startExercise', {
+    subjectId: state.subjectId,
+    keypointId: Number(button.dataset.id),
+    questionType: String(button.dataset.questionType || '')
+  });
+  if (action === 'open-cache' && state.cache?.key) {
+    post('openHistory', { subjectId: state.subjectId, item: { key: state.cache.key, id: state.cache.id, status: state.cache.status } });
+  }
+  if (action === 'open-history') {
+    const item = state.history[Number(button.dataset.index)];
+    if (item) post('openHistory', { subjectId: state.subjectId, item });
+  }
+  if (action === 'home') {
+    state.exercise = null;
+    state.solutions = null;
+    state.toolView = '';
+    state.answers = {};
+    state.drafts = {};
+    state.questionIndex = 0;
+    render();
+  }
+  if (action === 'answer') {
+    const answer = String(button.dataset.choice);
+    state.answers[state.questionIndex] = answer;
+    post('answer', { questionIndex: state.questionIndex, answer });
+    render();
+  }
+  if (action === 'save-essay') {
+    const answer = String(state.drafts[state.questionIndex] || '').trim();
+    if (answer) {
+      state.answers[state.questionIndex] = answer;
+      post('answer', { questionIndex: state.questionIndex, answer });
+      render();
+    }
+  }
+  if (action === 'submit') post('submit');
+  if (action === 'previous') {
+    state.questionIndex = Math.max(0, state.questionIndex - 1);
+    render();
+  }
+  if (action === 'next') {
+    state.questionIndex = Math.min(currentItems().length - 1, state.questionIndex + 1);
+    render();
+  }
+  if (action === 'goto') {
+    state.questionIndex = Number(button.dataset.index || 0);
+    render();
+  }
+  if (action === 'copy-note') post('copyNote', { text: buildNote() });
+  if (action === 'open-fenbi') post('openFenbi');
+});
+
+window.addEventListener('message', (event) => {
+  const message = event.data || {};
+  if (message.command === 'loading') {
+    state.loading = String(message.data?.message || '处理中…');
+    state.error = '';
+  }
+  if (message.command === 'error') {
+    state.loading = '';
+    state.error = String(message.data?.message || '操作失败');
+  }
+  if (message.command === 'state') {
+    Object.assign(state, message.data || {});
+    state.loading = '';
+    state.error = '';
+    state.exercise = null;
+    state.solutions = null;
+    state.toolView = '';
+    state.answers = {};
+    state.drafts = {};
+  }
+  if (message.command === 'exercise') {
+    state.exercise = message.data;
+    state.solutions = null;
+    state.answers = {};
+    state.drafts = {};
+    state.questionIndex = 0;
+    state.toolView = '';
+    state.loading = '';
+  }
+  if (message.command === 'answerSaved') {
+    state.loading = '';
+  }
+  if (message.command === 'solution') {
+    state.exercise = message.data;
+    state.solutions = { solutions: message.data.solutions || [] };
+    state.questionIndex = 0;
+    state.toolView = '';
+    state.loading = '';
+  }
+  if (message.command === 'wrongBook') {
+    state.toolView = 'wrongBook';
+    state.wrongCategories = message.data?.categories || [];
+    state.exercise = null;
+    state.solutions = null;
+    state.loading = '';
+  }
+  if (message.command === 'paperCatalog') {
+    state.toolView = 'papers';
+    if (Array.isArray(message.data?.labels)) state.paperLabels = message.data.labels;
+    if (Array.isArray(message.data?.papers)) state.papers = message.data.papers;
+    if (Object.prototype.hasOwnProperty.call(message.data || {}, 'selectedLabelId')) {
+      state.selectedLabelId = message.data.selectedLabelId;
+    }
+    state.exercise = null;
+    state.solutions = null;
+    state.loading = '';
+  }
+  if (message.command === 'paperDownloaded') state.loading = '';
+  render();
+});
+
+render();
+post('ready');
