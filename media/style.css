@@ -18,6 +18,10 @@ body {
   min-width: 0;
 }
 
+body.has-question-nav {
+  padding-bottom: 126px;
+}
+
 body {
   margin: 0;
   padding: 10px;
@@ -145,6 +149,29 @@ button:disabled {
   margin-bottom: 9px;
 }
 
+.question-count-panel {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 9px;
+}
+
+.question-count-panel label {
+  color: var(--muted);
+  font-size: 0.9em;
+}
+
+.question-count-panel select {
+  width: 100%;
+  height: 32px;
+  border: 1px solid var(--vscode-dropdown-border, var(--border));
+  border-radius: 6px;
+  padding: 0 8px;
+  background: var(--vscode-dropdown-background);
+  color: var(--vscode-dropdown-foreground);
+}
+
 .subject-panel label {
   color: var(--muted);
   font-size: 0.9em;
@@ -198,6 +225,50 @@ button:disabled {
   border: 1px solid var(--border);
   border-radius: var(--radius);
   background: var(--surface);
+}
+
+.material-card {
+  margin-bottom: 9px;
+  overflow: hidden;
+}
+
+.material-card > summary {
+  cursor: pointer;
+  padding: 9px 10px;
+  color: var(--muted);
+  font-size: 0.9em;
+  list-style: none;
+}
+
+.material-card > summary::-webkit-details-marker {
+  display: none;
+}
+
+.material-card > summary::after {
+  content: '›';
+  float: right;
+}
+
+.material-card[open] > summary::after {
+  content: '⌄';
+}
+
+.material-card > .rich-text {
+  border-top: 1px solid var(--border);
+  padding: 10px;
+}
+
+.review-options {
+  margin: 12px 0;
+}
+
+.review-options .option {
+  cursor: default;
+}
+
+.review-options .option.correct-option {
+  border-color: var(--vscode-testing-iconPassed, #30c9a1);
+  background: color-mix(in srgb, var(--vscode-testing-iconPassed, #30c9a1) 11%, var(--surface));
 }
 
 .section-card {
@@ -782,10 +853,19 @@ img[src*="formulas"] {
 }
 
 .question-nav {
+  position: fixed;
+  z-index: 20;
+  right: 0;
+  bottom: 0;
+  left: 0;
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: start;
   gap: 7px;
+  border-top: 1px solid var(--border);
+  padding: 7px 10px calc(7px + env(safe-area-inset-bottom));
+  background: var(--vscode-sideBar-background);
+  box-shadow: 0 -5px 14px color-mix(in srgb, #000 12%, transparent);
 }
 
 .progress-dots {
@@ -794,6 +874,9 @@ img[src*="formulas"] {
   flex-wrap: wrap;
   justify-content: center;
   gap: 4px;
+  max-height: 78px;
+  overflow-y: auto;
+  padding-right: 2px;
 }
 
 .dot {
@@ -878,6 +961,15 @@ img[src*="formulas"] {
   .subject-panel {
     grid-template-columns: 1fr;
     gap: 4px;
+  }
+
+  .question-count-panel {
+    grid-template-columns: 1fr;
+    gap: 4px;
+  }
+
+  .question-count-panel label {
+    display: none;
   }
 
   .subject-panel label {

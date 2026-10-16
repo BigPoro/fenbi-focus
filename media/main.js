@@ -154,7 +154,11 @@ function remoteAnswer(index) {
   const answer = answerMap[String(question?.globalId || question?.id || '')]?.answer
     || answerMap[index]?.answer
     || question?.userAnswer;
-  return answer?.choice ?? answer?.answer ?? '';
+  if (typeof answer === 'string' || typeof answer === 'number') return String(answer);
+  if (!answer || typeof answer !== 'object') return '';
+  const nested = answer.answer;
+  if (typeof nested === 'string' || typeof nested === 'number') return String(nested);
+  return answer.choice ?? nested?.choice ?? nested?.answer ?? '';
 }
 
 function getUserAnswer(index) {
@@ -168,15 +172,40 @@ function formatDate(timestamp) {
   return new Intl.DateTimeFormat('zh-CN', { year: 'numeric', month: '2-digit', day: '2-digit' }).format(date);
 }
 
-function materialForQuestion(question) {
-  if (question?.materialContent) return question.materialContent;
+function materialForQuestion(question, questions = currentItems()) {
   const materials = state.exercise?.materials || [];
   const indexes = Array.isArray(question?.materialIndexes) ? question.materialIndexes : [];
-  if (indexes.length) {
-    return indexes.map((index) => materials[index]?.content || '').filter(Boolean).join('');
-  }
-  const keys = Array.isArray(question?.materialKeys) ? question.materialKeys.map(String) : [];
-  return materials.filter((item) => keys.includes(String(item?.globalId))).map((item) => item.content || '').join('');
+  const keys = [question?.materialId, ...(Array.isArray(question?.materialKeys) ? question.materialKeys : [])]
+    .filter((value) => value != null && value !== '')
+    .map(String);
+  const indexedMaterials = indexes.map((index) => materials[index]).filter(Boolean);
+  const keyedMaterials = materials.filter((item) => keys.includes(String(item?.globalId)));
+  const linkedMaterials = indexedMaterials.length ? indexedMaterials : keyedMaterials;
+  const content = question?.materialContent || linkedMaterials.map((item) => item.content || '').filter(Boolean).join('');
+  if (!content) return null;
+
+  const identity = keys[0]
+    || (linkedMaterials[0]?.globalId == null ? '' : String(linkedMaterials[0].globalId))
+    || (indexes.length ? `index:${indexes[0]}` : 'inline');
+  const related = questions.filter((item) => {
+    const itemIndexes = Array.isArray(item?.materialIndexes) ? item.materialIndexes : [];
+    const itemKeys = [item?.materialId, ...(Array.isArray(item?.materialKeys) ? item.materialKeys : [])]
+      .filter((value) => value != null && value !== '')
+      .map(String);
+    const itemIdentity = itemKeys[0]
+      || (itemIndexes.length && materials[itemIndexes[0]]?.globalId != null ? String(materials[itemIndexes[0]].globalId) : '')
+      || (itemIndexes.length ? `index:${itemIndexes[0]}` : '');
+    return itemIdentity === identity;
+  });
+  const position = Math.max(0, related.indexOf(question));
+  return { content, shared: related.length > 1, position, total: related.length };
+}
+
+function renderMaterial(question, questions) {
+  const material = materialForQuestion(question, questions);
+  if (!material) return '';
+  const summary = material.shared ? `共享材料 · 第 ${material.position + 1}/${material.total} 题` : '题目材料';
+  return `<details class="material-card" open><summary>${summary}</summary><div class="rich-text">${sanitizeHtml(material.content)}</div></details>`;
 }
 
 function optionItems(question) {
@@ -292,6 +321,12 @@ function renderHome() {
         ${state.subjects.map((item) => `<option value="${escapeText(item.id)}" ${item.id === state.subjectId ? 'selected' : ''}>${escapeText(item.label)}</option>`).join('')}
       </select>
     </section>
+    ${state.subject?.answerMode !== 'interview' ? `<section class="question-count-panel">
+      <label for="question-count-select">每组题数</label>
+      <select id="question-count-select" aria-label="设置每组题数">
+        ${[5, 10, 15, 20, 25, 30, 40, 50].map((count) => `<option value="${count}" ${Number(state.questionCount) === count ? 'selected' : ''}>${count} 题</option>`).join('')}
+      </select>
+    </section>` : ''}
     <section class="quick-actions" aria-label="常用练习">
       <button data-action="open-wrong-book" ${state.subject?.answerMode === 'interview' ? 'disabled' : ''}><strong>我的错题</strong><small>按题型复盘</small></button>
       <button data-action="quick-exercise" ${state.subject?.answerMode === 'interview' ? 'disabled' : ''}><strong>快速练习</strong><small>直接开始</small></button>
@@ -320,6 +355,16 @@ function renderObjectiveAnswer(question, selected) {
   </div>`;
 }
 
+function renderReviewOptions(question, selected, correctAnswer) {
+  const options = optionItems(question);
+  if (!options.length) return '';
+  return `<div class="options review-options">
+    ${options.map((option, index) => `<div class="option ${selected === String(index) ? 'selected' : ''} ${correctAnswer === String(index) ? 'correct-option' : ''}">
+      <b>${OPTION_LABELS[index] || index + 1}</b><span class="rich-text">${sanitizeHtml(option)}</span>
+    </div>`).join('')}
+  </div>`;
+}
+
 function renderEssayAnswer() {
   const saved = getUserAnswer(state.questionIndex);
   const draft = state.drafts[state.questionIndex] ?? saved;
@@ -337,13 +382,12 @@ function renderQuestion() {
     return '<section class="empty-card"><p>没有可展示的题目。</p><button data-action="home">返回目录</button></section>';
   }
   const selected = getUserAnswer(state.questionIndex);
-  const material = materialForQuestion(question);
   return `<header class="practice-header">
       <button class="text-button" data-action="home">‹ 目录</button>
       <span><strong>${state.questionIndex + 1}</strong> / ${questions.length}</span>
       <button class="primary compact-button" data-action="submit">交卷</button>
     </header>
-    ${material ? `<details class="material-card" open><summary>题目材料</summary><div class="rich-text">${sanitizeHtml(material)}</div></details>` : ''}
+    ${renderMaterial(question, questions)}
     <article class="question-card">
       <div class="rich-text question-content">${sanitizeHtml(question.content)}</div>
       ${state.exercise.answerMode === 'essay' ? renderEssayAnswer() : renderObjectiveAnswer(question, selected)}
@@ -366,7 +410,6 @@ function renderSolution() {
   const isInterview = state.exercise?.answerMode === 'interview';
   const isEssay = state.exercise?.answerMode === 'essay';
   const isCorrect = !isEssay && !isInterview && userAnswer !== '' && userAnswer === correctAnswer;
-  const material = materialForQuestion(solution);
   return `<header class="practice-header">
       <button class="text-button" data-action="home">‹ 目录</button>
       <span><strong>${state.questionIndex + 1}</strong> / ${solutions.length}</span>
@@ -376,9 +419,10 @@ function renderSolution() {
       <strong>${isCorrect ? '回答正确' : '需要复盘'}</strong>
       <span>我的答案 ${userAnswer === '' ? '—' : OPTION_LABELS[Number(userAnswer)] || userAnswer} · 正确答案 ${OPTION_LABELS[Number(correctAnswer)] || correctAnswer}</span>
     </section>` : ''}
-    ${material ? `<details class="material-card"><summary>题目材料</summary><div class="rich-text">${sanitizeHtml(material)}</div></details>` : ''}
+    ${renderMaterial(solution, solutions)}
     <article class="question-card">
       <div class="rich-text question-content">${sanitizeHtml(solution.content)}</div>
+      ${!isEssay && !isInterview ? renderReviewOptions(solution, userAnswer, correctAnswer) : ''}
       ${isEssay && userAnswer ? `<section class="my-essay"><h3>我的作答</h3><p>${escapeText(userAnswer)}</p></section>` : ''}
       <section class="solution-block"><h3>${isInterview ? '参考思路' : '解析'}</h3><div class="rich-text">${sanitizeHtml(solution.solution)}</div></section>
       <button class="secondary full" data-action="copy-note">复制题干，稍后存飞书</button>
@@ -458,6 +502,7 @@ function render() {
           ? renderPaperCatalog()
           : renderHome();
   app.innerHTML = `${state.loading ? `<div class="status-banner loading"><span></span>${escapeText(state.loading)}</div>` : ''}${state.error ? `<div class="status-banner error">${escapeText(state.error)}</div>` : ''}${content}`;
+  document.body.classList.toggle('has-question-nav', Boolean(state.exercise || state.solutions));
   enhanceRenderedImages();
 }
 
@@ -465,11 +510,24 @@ function buildNote() {
   const solution = currentQuestion();
   if (!solution) return '';
   const questionType = questionTypeFor(solution);
-  const images = imageMarkdown(solution.content);
+  const material = materialForQuestion(solution);
+  const options = optionItems(solution);
+  const userAnswer = getUserAnswer(state.questionIndex);
+  const correctAnswer = solutionAnswer(solution);
+  const optionLines = options.map((option, index) => `${OPTION_LABELS[index] || index + 1}. ${plainText(option)}`);
+  const images = [
+    ...(material ? imageMarkdown(material.content) : []),
+    ...imageMarkdown(solution.content),
+    ...options.flatMap(imageMarkdown)
+  ];
   return [
     `题目类型：${questionType}`,
+    material ? `材料：${plainText(material.content)}` : '',
     `关键题干：${plainText(solution.content)}`,
-    ...images
+    optionLines.length ? `选项：\n${optionLines.join('\n')}` : '',
+    userAnswer ? `我的答案：${OPTION_LABELS[Number(userAnswer)] || userAnswer}` : '',
+    correctAnswer ? `正确答案：${OPTION_LABELS[Number(correctAnswer)] || correctAnswer}` : '',
+    ...[...new Set(images)]
   ].filter(Boolean).join('\n');
 }
 
@@ -488,6 +546,9 @@ function questionTypeFor(question) {
 app.addEventListener('change', (event) => {
   if (event.target.id === 'subject-select') {
     post('changeSubject', { subjectId: event.target.value });
+  }
+  if (event.target.id === 'question-count-select') {
+    post('setQuestionCount', { questionCount: Number(event.target.value) });
   }
   if (event.target.id === 'paper-label-select' && event.target.value) {
     const label = state.paperLabels.find((item) => Number(item.id) === Number(event.target.value));
@@ -614,6 +675,10 @@ window.addEventListener('message', (event) => {
     state.solutions = { solutions: message.data.solutions || [] };
     state.questionIndex = 0;
     state.toolView = '';
+    state.loading = '';
+  }
+  if (message.command === 'questionCount') {
+    state.questionCount = Number(message.data?.questionCount || 0);
     state.loading = '';
   }
   if (message.command === 'wrongBook') {

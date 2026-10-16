@@ -73,6 +73,7 @@ function normalizeUserInfo(payload) {
   const data = requireObject(unwrapData(payload), '出题设置');
   return {
     questionCount: Number(data.questionCount || 5),
+    sheetType: Number(data.sheetType || 0),
     yearScope: Number(data.yearScope || 0),
     correctRatioLow: Number(data.correctRatioLow || 0),
     correctRatioHigh: Number(data.correctRatioHigh || 100)
@@ -220,7 +221,27 @@ function normalizeErrorSolutions(payload, questionIds = []) {
   });
   const data = payload && typeof payload === 'object' && payload.data && typeof payload.data === 'object' ? payload.data : {};
   const materials = Array.isArray(payload?.materials) ? payload.materials : Array.isArray(data.materials) ? data.materials : [];
-  return { items: sortedItems, materials };
+  const userAnswers = data.userAnswers && typeof data.userAnswers === 'object'
+    ? data.userAnswers
+    : payload?.userAnswers && typeof payload.userAnswers === 'object' ? payload.userAnswers : {};
+  const enrichedItems = sortedItems.map((item) => {
+    const id = String(item?.globalId || item?.questionId || item?.id || '');
+    const userAnswer = item.userAnswer || userAnswers[id]?.answer || userAnswers[id] || null;
+    const indexes = Array.isArray(item.materialIndexes) ? item.materialIndexes : [];
+    const material = indexes.length && typeof indexes[0] === 'number' ? materials[indexes[0]] : null;
+    if (material) {
+      const materialId = material.globalId == null ? null : String(material.globalId);
+      return {
+        ...item,
+        ...(userAnswer ? { userAnswer } : {}),
+        materialId,
+        materialKeys: materialId ? [materialId] : (item.materialKeys || []),
+        materialContent: item.materialContent || material.content || null
+      };
+    }
+    return userAnswer ? { ...item, userAnswer } : item;
+  });
+  return { items: enrichedItems, materials };
 }
 
 function normalizePaperLabels(payload) {
@@ -273,11 +294,14 @@ function attachMaterialContent(items, card, materials) {
     const node = cardNodes[index];
     const materialKeys = Array.isArray(node?.materialKeys) ? node.materialKeys : [];
     const materialId = materialKeys.length ? String(materialKeys[0]) : '';
-    if (!materialId || usedMaterialIds.has(materialId)) {
-      return { ...item, materialContent: null };
-    }
-    usedMaterialIds.add(materialId);
-    return { ...item, materialContent: contentById.get(materialId) || null };
+    const isFirstEncounter = materialId && !usedMaterialIds.has(materialId);
+    if (materialId) usedMaterialIds.add(materialId);
+    return {
+      ...item,
+      materialId: materialId || null,
+      materialKeys: materialKeys.length ? materialKeys : (item.materialKeys || []),
+      materialContent: isFirstEncounter ? (contentById.get(materialId) || null) : null
+    };
   });
 }
 

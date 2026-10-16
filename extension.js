@@ -77,6 +77,9 @@ class PracticeViewProvider {
         case 'startExercise':
           await this.startExercise(message.subjectId, asPositiveInteger(message.keypointId, '知识点 ID'), message.questionType);
           break;
+        case 'setQuestionCount':
+          await this.setQuestionCount(message.questionCount);
+          break;
         case 'startQuickExercise':
           await this.startQuickExercise(message.subjectId);
           break;
@@ -155,10 +158,11 @@ class PracticeViewProvider {
       });
       return;
     }
-    const [user, categories, cache, history] = await Promise.all([
+    const [user, categories, cache, history, questionSettings] = await Promise.all([
       ...baseRequests,
       this.client.subjectUnfinishedExercise(subject.id),
-      this.client.history(subject.id, 15)
+      this.client.history(subject.id, 15),
+      this.client.userQuestionInfo()
     ]);
     this.post('state', {
       authenticated: true,
@@ -169,6 +173,7 @@ class PracticeViewProvider {
       categories,
       cache,
       history,
+      questionCount: questionSettings.questionCount,
       settings
     });
   }
@@ -180,6 +185,12 @@ class PracticeViewProvider {
     await this.context.workspaceState.update(SUBJECT_STATE_KEY, subject.id);
     this.current = undefined;
     await this.refresh(subject.id);
+  }
+
+  async setQuestionCount(questionCount) {
+    this.post('loading', { message: '正在保存每组题数…' });
+    const count = await this.client.updateQuestionCount(questionCount);
+    this.post('questionCount', { questionCount: count });
   }
 
   async setCookie() {

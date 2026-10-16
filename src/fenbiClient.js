@@ -426,6 +426,16 @@ class FenbiClient {
     return normalizeUserInfo(payload);
   }
 
+  async updateQuestionCount(questionCount) {
+    const count = Number(questionCount);
+    if (!Number.isInteger(count) || count < 1 || count > 100) {
+      throw new Error('每组题数应为 1 到 100 的整数');
+    }
+    const settings = await this.userQuestionInfo();
+    await this.request('POST', `https://tiku.fenbi.com/activity/userquiz/updateUserQuestionInfo?sheetType=${settings.sheetType}&questionCount=${count}&yearScope=${settings.yearScope}&correctRatioLow=${settings.correctRatioLow}&correctRatioHigh=${settings.correctRatioHigh}&${API_QUERY}`, { json: {} });
+    return count;
+  }
+
   async createExercise(keypointId) {
     const settings = await this.userQuestionInfo();
     const payload = await this.request('POST', `https://tiku.fenbi.com/api/xingce/exercises?${API_QUERY}`, {

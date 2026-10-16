@@ -40,6 +40,23 @@ test('normalizes current user display name', () => {
   assert.deepEqual(normalizeCurrentUser({ id: 1, nickname: '测试用户' }), { id: '1', name: '测试用户' });
 });
 
+test('keeps every server setting needed when changing question count', () => {
+  const { normalizeUserInfo } = require('../src/contracts');
+  assert.deepEqual(normalizeUserInfo({ data: {
+    questionCount: 15,
+    sheetType: 2,
+    yearScope: 5,
+    correctRatioLow: 30,
+    correctRatioHigh: 80
+  } }), {
+    questionCount: 15,
+    sheetType: 2,
+    yearScope: 5,
+    correctRatioLow: 30,
+    correctRatioHigh: 80
+  });
+});
+
 test('normalizes recent practice history without inventing missing scores', () => {
   const [item] = normalizeHistory({ datas: [{
     id: 88,
@@ -145,6 +162,31 @@ test('flattens wrong-question solutions grouped by question id and keeps request
   }, ['301', '302']);
   assert.deepEqual(result.items.map((item) => item.globalId), [301, 302]);
   assert.equal(result.materials.length, 1);
+});
+
+test('associates an error question material index with a stable material identity', () => {
+  const result = normalizeErrorSolutions({
+    data: { 301: { globalId: 301, content: '第一小题', materialIndexes: [0] } },
+    materials: [{ globalId: 901, content: '共享资料' }]
+  }, ['301']);
+  assert.deepEqual(result.items[0], {
+    globalId: 301,
+    content: '第一小题',
+    materialIndexes: [0],
+    materialId: '901',
+    materialKeys: ['901'],
+    materialContent: '共享资料'
+  });
+});
+
+test('keeps the historical answer returned alongside an error solution', () => {
+  const result = normalizeErrorSolutions({
+    data: {
+      userAnswers: { 301: { answer: { type: 201, choice: '2' } } },
+      solutions: [{ globalId: 301, content: '第一题', solution: '解析' }]
+    }
+  }, ['301']);
+  assert.deepEqual(result.items[0].userAnswer, { type: 201, choice: '2' });
 });
 
 test('normalizes paper labels exposed by Fenbi', () => {
