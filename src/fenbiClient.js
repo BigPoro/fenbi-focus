@@ -349,7 +349,6 @@ class FenbiClient {
     return {
       ...questionSet,
       combineKey,
-      exerciseId: Number(metadata.data?.ancientExerciseId?.id || metadata.data?.exerciseId || 0),
       userAnswers: metadata.data?.userAnswers && typeof metadata.data.userAnswers === 'object' ? metadata.data.userAnswers : {}
     };
   }
@@ -385,7 +384,6 @@ class FenbiClient {
     return {
       ...solutionSet,
       combineKey,
-      exerciseId: Number(metadata.data?.ancientExerciseId?.id || metadata.data?.exerciseId || 0),
       userAnswers: metadata.data?.userAnswers && typeof metadata.data.userAnswers === 'object' ? metadata.data.userAnswers : {}
     };
   }

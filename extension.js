@@ -113,9 +113,6 @@ class PracticeViewProvider {
         case 'copyNote':
           await this.copyNote(message.text);
           break;
-        case 'openFenbi':
-          await this.openFenbi();
-          break;
         default:
           break;
       }
@@ -227,7 +224,6 @@ class PracticeViewProvider {
         subjectId: subject.id,
         subject,
         answerMode: 'interview',
-        exerciseId: 0,
         solutions: document.items,
         materials: document.materials,
         userAnswers: {},
@@ -284,7 +280,6 @@ class PracticeViewProvider {
       subjectId: subject.id,
       subject,
       answerMode: subject.answerMode,
-      exerciseId: 0,
       solutions: document.items,
       materials: document.materials,
       userAnswers: {},
@@ -344,7 +339,6 @@ class PracticeViewProvider {
       subjectId: subject.id,
       subject,
       answerMode: subject.answerMode,
-      exerciseId: document.exerciseId,
       combineKey,
       questions: document.items,
       materials: document.materials,
@@ -365,7 +359,6 @@ class PracticeViewProvider {
         subjectId: subject.id,
         subject,
         answerMode: subject.answerMode,
-        exerciseId: document.exerciseId || Number(item?.id || 0),
         combineKey,
         solutions: document.items,
         materials: document.materials,
@@ -432,13 +425,6 @@ class PracticeViewProvider {
     if (!value || value.length > 20000) throw new Error('错题内容为空或过长');
     await vscode.env.clipboard.writeText(value);
     void vscode.window.showInformationMessage('题干已复制，可运行“省考：保存剪贴板错题到个人飞书”任务。');
-  }
-
-  async openFenbi() {
-    if (!this.current?.exerciseId) throw new Error('当前记录没有可打开的粉笔练习 ID');
-    const id = asPositiveInteger(this.current.exerciseId, '练习 ID');
-    const category = getSubject(this.current.subjectId).id;
-    await vscode.env.openExternal(vscode.Uri.parse(`https://www.fenbi.com/spa/tiku/report/exam/solution/${category}/${category}/${id}/2`));
   }
 
   getHtml(webview) {

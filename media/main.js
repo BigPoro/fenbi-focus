@@ -413,7 +413,7 @@ function renderSolution() {
   return `<header class="practice-header">
       <button class="text-button" data-action="home">‹ 目录</button>
       <span><strong>${state.questionIndex + 1}</strong> / ${solutions.length}</span>
-      ${state.exercise?.exerciseId ? '<button class="text-button" data-action="open-fenbi">官网 ↗</button>' : '<span></span>'}
+      <span></span>
     </header>
     ${!isEssay && !isInterview ? `<section class="result-strip ${isCorrect ? 'correct' : 'wrong'}">
       <strong>${isCorrect ? '回答正确' : '需要复盘'}</strong>
@@ -635,7 +635,6 @@ app.addEventListener('click', (event) => {
     render();
   }
   if (action === 'copy-note') post('copyNote', { text: buildNote() });
-  if (action === 'open-fenbi') post('openFenbi');
 });
 
 window.addEventListener('message', (event) => {
