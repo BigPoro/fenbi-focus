@@ -498,6 +498,9 @@ class PracticeViewProvider {
     if (!this.current || this.current.readOnly || !this.current.combineKey) {
       throw new Error('当前没有可提交的练习');
     }
+    if (this.current.answerMode === 'essay' || this.current.practiceKind === 'essay-browser') {
+      throw new Error('主观题暂不支持交卷批改，已支持在题目下方保存作答');
+    }
     const choice = await vscode.window.showInformationMessage('确认交卷？', { modal: true }, '确认交卷');
     if (choice !== '确认交卷') return;
     this.post('loading', { message: '正在交卷并读取解析…' });

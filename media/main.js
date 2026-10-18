@@ -615,10 +615,11 @@ function renderQuestion() {
   }
   const selected = getUserAnswer(state.questionIndex);
   const isEssay = state.exercise.answerMode === 'essay';
+  const showSubmit = !state.exercise.readOnly && !isEssay && state.exercise.practiceKind !== 'essay-browser';
   return `<header class="practice-header">
       <button class="text-button" data-action="home">‹ 目录</button>
       <span><strong>${state.questionIndex + 1}</strong> / ${questions.length}</span>
-      ${state.exercise.readOnly ? '<small>只读查看</small>' : '<button class="primary compact-button" data-action="submit">交卷</button>'}
+      ${showSubmit ? '<button class="primary compact-button" data-action="submit">交卷</button>' : (state.exercise.readOnly ? '<small>只读查看</small>' : '<span></span>')}
     </header>
     ${renderMaterial(question, questions)}
     <article class="question-card">
