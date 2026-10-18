@@ -282,6 +282,42 @@ function restoreQuestionHighlights() {
   if (materialRoot) applyHighlights(materialRoot, materialHighlightRangesFor(question));
 }
 
+function updateHighlightClearButton() {
+  const question = currentQuestion();
+  const clearBtn = app.querySelector('button[data-action="clear-highlights"]');
+  if (clearBtn && question) {
+    const hasHighlights = highlightRangesFor(question).length > 0 || materialHighlightRangesFor(question).length > 0;
+    clearBtn.disabled = !hasHighlights;
+  }
+}
+
+function refreshQuestionHighlights(target) {
+  const question = currentQuestion();
+  if (!question) return;
+
+  if (!target || target === 'question') {
+    const questionRoot = app.querySelector('.question-content');
+    if (questionRoot) {
+      questionRoot.innerHTML = sanitizeHtml(question.content);
+      enhanceRenderedImages();
+      applyHighlights(questionRoot, highlightRangesFor(question));
+    }
+  }
+
+  if (!target || target === 'material') {
+    const materialRoot = app.querySelector('.material-content');
+    const material = materialForQuestion(question);
+    if (materialRoot && material) {
+      materialRoot.innerHTML = sanitizeHtml(material.content);
+      enhanceRenderedImages();
+      applyHighlights(materialRoot, materialHighlightRangesFor(question));
+    }
+  }
+
+  updateHighlightClearButton();
+  updateHighlightControls();
+}
+
 function renderHighlightControls(question) {
   const hasQuestionHighlights = highlightRangesFor(question).length > 0;
   const hasMaterialHighlights = materialHighlightRangesFor(question).length > 0;
@@ -725,7 +761,11 @@ function enhanceRenderedImages() {
   });
 }
 
-function render() {
+function render(options = {}) {
+  const resetScroll = options.resetScroll ?? false;
+  const scrollY = resetScroll ? 0 : (window.scrollY || document.documentElement.scrollTop || 0);
+  const scrollX = resetScroll ? 0 : (window.scrollX || document.documentElement.scrollLeft || 0);
+
   document.documentElement.style.setProperty('--question-font-size', `${Number(state.fontSize || 14)}px`);
   document.body.classList.toggle('compact', Boolean(state.compact));
   const content = state.solutions
@@ -747,6 +787,15 @@ function render() {
   enhanceRenderedImages();
   restoreQuestionHighlights();
   updateHighlightControls();
+
+  if (resetScroll) {
+    window.scrollTo(0, 0);
+  } else if (scrollY > 0 || scrollX > 0) {
+    window.scrollTo(scrollX, scrollY);
+    requestAnimationFrame(() => {
+      window.scrollTo(scrollX, scrollY);
+    });
+  }
 }
 
 function buildNote() {
@@ -870,20 +919,20 @@ app.addEventListener('click', (event) => {
     } else {
       state.toolView = '';
     }
-    render();
+    render({ resetScroll: true });
   }
   if (action === 'answer') {
     const answer = String(button.dataset.choice);
     state.answers[state.questionIndex] = answer;
     post('answer', { questionIndex: state.questionIndex, answer });
-    render();
+    render({ resetScroll: false });
   }
   if (action === 'save-essay') {
     const answer = String(state.drafts[state.questionIndex] || '').trim();
     if (answer) {
       state.answers[state.questionIndex] = answer;
       post('answer', { questionIndex: state.questionIndex, answer });
-      render();
+      render({ resetScroll: false });
     }
   }
   if (action === 'highlight-selection') {
@@ -896,7 +945,7 @@ app.addEventListener('click', (event) => {
       if (key) {
         state.highlights[key] = normalizeHighlightRanges([...(state.highlights[key] || []), activeTarget.range]);
         window.getSelection()?.removeAllRanges();
-        render();
+        refreshQuestionHighlights(activeTarget.target);
       }
     }
   }
@@ -907,21 +956,21 @@ app.addEventListener('click', (event) => {
       const matKey = materialHighlightKey(question);
       if (matKey) delete state.highlights[matKey];
       window.getSelection()?.removeAllRanges();
-      render();
+      refreshQuestionHighlights();
     }
   }
   if (action === 'submit') post('submit');
   if (action === 'previous') {
     state.questionIndex = Math.max(0, state.questionIndex - 1);
-    render();
+    render({ resetScroll: true });
   }
   if (action === 'next') {
     state.questionIndex = Math.min(currentItems().length - 1, state.questionIndex + 1);
-    render();
+    render({ resetScroll: true });
   }
   if (action === 'goto') {
     state.questionIndex = Number(button.dataset.index || 0);
-    render();
+    render({ resetScroll: true });
   }
   if (action === 'copy-note') post('copyNote', { text: buildNote() });
 });
@@ -1006,7 +1055,8 @@ window.addEventListener('message', (event) => {
     state.loading = '';
   }
   if (message.command === 'paperDownloaded') state.loading = '';
-  render();
+  const resetCommands = new Set(['state', 'exercise', 'solution', 'wrongBook', 'paperCatalog', 'essayQuestionList']);
+  render({ resetScroll: resetCommands.has(message.command) });
 });
 
 render();
