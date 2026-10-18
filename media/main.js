@@ -508,21 +508,21 @@ function renderHome() {
         ${state.subjects.map((item) => `<option value="${escapeText(item.id)}" ${item.id === state.subjectId ? 'selected' : ''}>${escapeText(item.label)}</option>`).join('')}
       </select>
     </section>
-    ${state.subject?.id === 'shenlun' ? `<section class="section-card">
+    ${isEssayBrowser ? renderEssayQuestionSection() : renderObjectiveHomeContent()}`;
+}
+
+function renderObjectiveHomeContent() {
+  return `${state.subject?.id === 'shenlun' ? `<section class="section-card">
       <div class="section-title"><h2>申论功能提示</h2><small>粉笔官网限制</small></div>
       <p class="muted compact-copy">主观题交卷及官方解析受粉笔官网会员和练习提交状态限制；未开通对应权限时，交卷与解析无法使用。</p>
     </section>` : ''}
-    ${!isEssayBrowser && state.subject?.answerMode !== 'interview' ? `<section class="question-count-panel">
+    ${state.subject?.answerMode !== 'interview' ? `<section class="question-count-panel">
       <label for="question-count-select">每组题数</label>
       <select id="question-count-select" aria-label="设置每组题数">
         ${[5, 10, 15, 20, 25, 30, 40, 50].map((count) => `<option value="${count}" ${Number(state.questionCount) === count ? 'selected' : ''}>${count} 题</option>`).join('')}
       </select>
     </section>` : ''}
-    ${isEssayBrowser ? `<section class="section-card">
-      <div class="section-title"><h2>综应题库</h2><small>与网页端一致</small></div>
-      <p class="muted compact-copy">浏览当前考试分类下已有的综应题目，点击后只读查看材料和题干。</p>
-      <button class="primary" data-action="open-essay-question-list">浏览综应题目</button>
-    </section>` : `<section class="quick-actions" aria-label="常用练习">
+    <section class="quick-actions" aria-label="常用练习">
       <button data-action="open-wrong-book" ${state.subject?.answerMode === 'interview' ? 'disabled' : ''}><strong>我的错题</strong><small>按题型复盘</small></button>
       <button data-action="quick-exercise" ${state.subject?.answerMode === 'interview' ? 'disabled' : ''}><strong>快速练习</strong><small>直接开始</small></button>
       <button data-action="smart-exercise" ${state.subject?.answerMode === 'interview' ? 'disabled' : ''}><strong>智能组卷</strong><small>全部年份</small></button>
@@ -538,34 +538,39 @@ function renderHome() {
     <section class="section-card category-card">
       <div class="section-title"><h2>专项练习</h2><small>${escapeText(state.subject?.label || '')}</small></div>
       <ul class="category-list">${state.categories.map((item) => renderCategory(item)).join('')}</ul>
-    </section>`}`;
+    </section>`;
 }
 
-function renderEssayQuestionList() {
+function renderEssayQuestionSection() {
   const page = state.essayQuestionPage || { current: 0, total: 0, totalPages: 0 };
   const category = state.essayExamCategory;
-  const selectedId = Number(state.essayQuestionCategoryId || state.categories[0]?.id || 0);
-  const root = state.categories.find((item) => Number(item.id) === selectedId || item.children.some((child) => Number(child.id) === selectedId)) || state.categories[0];
+  const categories = state.categories || [];
+  const selectedId = Number(state.essayQuestionCategoryId || categories[0]?.id || 1);
+  const root = categories.find((item) => Number(item.id) === selectedId || (item.children || []).some((child) => Number(child.id) === selectedId)) || categories[0];
   const subcategories = root?.children || [];
-  return `<header class="practice-header">
-    <button class="text-button" data-action="home">‹ 目录</button>
-    <span><strong>综应题目</strong>${category?.name ? ` · ${escapeText(category.name)}` : ''}</span>
-    <span></span>
-  </header>
-  <section class="section-card category-card">
-    <div class="essay-filter" aria-label="综应题型">
-      ${state.categories.map((item) => `<button class="${Number(item.id) === Number(root?.id) ? 'active' : ''}" data-action="essay-category" data-category-id="${item.id}">${escapeText(item.name)}</button>`).join('')}
+  const items = state.essayQuestions || [];
+
+  return `<section class="section-card category-card">
+    <div class="section-title">
+      <h2>综应题库${category?.name ? ` · ${escapeText(category.name)}` : ''}</h2>
+      <small>共 ${page.total} 题</small>
     </div>
+    ${categories.length ? `<div class="essay-filter" aria-label="综应题型">
+      ${categories.map((item) => `<button class="${Number(item.id) === Number(root?.id) ? 'active' : ''}" data-action="essay-category" data-category-id="${item.id}">${escapeText(item.name)}</button>`).join('')}
+    </div>` : ''}
     ${subcategories.length ? `<div class="essay-filter essay-subfilter" aria-label="综应细分题型">
       <button class="${selectedId === Number(root?.id) ? 'active' : ''}" data-action="essay-category" data-category-id="${root.id}">全部</button>
       ${subcategories.map((item) => `<button class="${selectedId === Number(item.id) ? 'active' : ''}" data-action="essay-category" data-category-id="${item.id}">${escapeText(item.name)}</button>`).join('')}
     </div>` : ''}
-    <div class="section-title"><h2>题目列表</h2><small>共 ${page.total} 题</small></div>
-    <div class="history-list">${state.essayQuestions.map((item, index) => `<button class="history-row" data-action="open-essay-question" data-index="${index}">
+    <div class="history-list">${items.length ? items.map((item, index) => `<button class="history-row" data-action="open-essay-question" data-index="${index}">
       <span class="history-main"><strong>${escapeText(item.content || '未提供题干')}</strong><small>${escapeText(item.source || '来源未提供')}${item.completedCount ? ` · ${item.completedCount} 人完成` : ''}</small></span><span class="history-action">查看 ›</span>
-    </button>`).join('') || '<p class="muted">当前页没有题目。</p>'}</div>
-    <nav class="question-nav"><button data-action="essay-page" data-page="${page.current - 1}" ${page.current <= 0 ? 'disabled' : ''}>上一页</button><span>${page.current + 1} / ${Math.max(1, page.totalPages)}</span><button data-action="essay-page" data-page="${page.current + 1}" ${page.current + 1 >= page.totalPages ? 'disabled' : ''}>下一页</button></nav>
+    </button>`).join('') : '<p class="muted">当前分类暂无题目，或正在读取中…</p>'}</div>
+    ${page.totalPages > 1 ? `<nav class="question-nav"><button data-action="essay-page" data-page="${page.current - 1}" ${page.current <= 0 ? 'disabled' : ''}>上一页</button><span>${page.current + 1} / ${Math.max(1, page.totalPages)}</span><button data-action="essay-page" data-page="${page.current + 1}" ${page.current + 1 >= page.totalPages ? 'disabled' : ''}>下一页</button></nav>` : ''}
   </section>`;
+}
+
+function renderEssayQuestionList() {
+  return renderHome();
 }
 
 function renderObjectiveAnswer(question, selected) {
@@ -844,13 +849,18 @@ app.addEventListener('click', (event) => {
     if (item) post('openHistory', { subjectId: state.subjectId, item });
   }
   if (action === 'home') {
+    const fromEssayBrowser = state.exercise?.practiceKind === 'essay-browser';
     state.exercise = null;
     state.solutions = null;
-    state.toolView = '';
     state.answers = {};
     state.drafts = {};
     state.highlights = {};
     state.questionIndex = 0;
+    if (fromEssayBrowser && Array.isArray(state.essayQuestions) && state.essayQuestions.length) {
+      state.toolView = 'essayQuestions';
+    } else {
+      state.toolView = '';
+    }
     render();
   }
   if (action === 'answer') {

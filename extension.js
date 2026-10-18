@@ -148,9 +148,38 @@ class PracticeViewProvider {
     this.post('loading', { message: `正在读取${subject.label}…` });
     // 本地记住的科目不会自动恢复粉笔服务端课程集；先同步，再读取依赖课程上下文的数据。
     await this.client.changeSubject(subject.id);
+    if (subject.id === 'zhyynl') {
+      const categories = listEssayQuestionCategories();
+      const selectedCategoryId = categories.some((category) =>
+        category.id === this.essayQuestionCategoryId || category.children.some((child) => child.id === this.essayQuestionCategoryId))
+        ? this.essayQuestionCategoryId
+        : categories[0].id;
+      this.essayQuestionCategoryId = selectedCategoryId;
+      const [user, essayList] = await Promise.all([
+        this.client.currentUser(),
+        this.client.essayQuestionList(selectedCategoryId, 0)
+      ]);
+      this.post('state', {
+        authenticated: true,
+        user,
+        subjects: listSubjects(),
+        subjectId: subject.id,
+        subject,
+        categories,
+        cache: null,
+        history: [],
+        essayQuestions: essayList.items,
+        essayQuestionPage: essayList.page,
+        essayExamCategory: essayList.examCategory,
+        essayQuestionCategoryId: selectedCategoryId,
+        questionCount: 0,
+        settings
+      });
+      return;
+    }
     const baseRequests = [
       this.client.currentUser(),
-      subject.id === 'zhyynl' ? Promise.resolve(listEssayQuestionCategories()) : this.client.subjectCategories(subject.id)
+      this.client.subjectCategories(subject.id)
     ];
     if (subject.answerMode === 'interview') {
       const [user, categories] = await Promise.all(baseRequests);
@@ -173,10 +202,6 @@ class PracticeViewProvider {
       this.client.history(subject.id, 15),
       this.client.userQuestionInfo()
     ]);
-    if (subject.id === 'zhyynl' && !categories.some((category) =>
-      category.id === this.essayQuestionCategoryId || category.children.some((child) => child.id === this.essayQuestionCategoryId))) {
-      this.essayQuestionCategoryId = categories[0].id;
-    }
     this.post('state', {
       authenticated: true,
       user,
