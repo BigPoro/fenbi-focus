@@ -434,10 +434,27 @@ function normalizeImageUrl(value) {
   return url;
 }
 
+function normalizeHighlightRanges(ranges) {
+  const sorted = (Array.isArray(ranges) ? ranges : [])
+    .map((range) => ({ start: Number(range?.start), end: Number(range?.end) }))
+    .filter((range) => Number.isInteger(range.start) && Number.isInteger(range.end) && range.end > range.start)
+    .sort((left, right) => left.start - right.start || left.end - right.end);
+  return sorted.reduce((merged, range) => {
+    const previous = merged[merged.length - 1];
+    if (previous && range.start <= previous.end) {
+      previous.end = Math.max(previous.end, range.end);
+    } else {
+      merged.push(range);
+    }
+    return merged;
+  }, []);
+}
+
 module.exports = {
   ContractError,
   isFormulaImage,
   normalizeImageUrl,
+  normalizeHighlightRanges,
   normalizeCategories,
   normalizeCurrentExamCategory,
   normalizeCombinedQuestionSet,

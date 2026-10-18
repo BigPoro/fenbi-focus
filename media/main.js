@@ -151,30 +151,94 @@ function normalizeHighlightRanges(ranges) {
   }, []);
 }
 
-function textOffsetWithin(root, container, offset) {
-  const prefix = document.createRange();
-  prefix.setStart(root, 0);
-  prefix.setEnd(container, offset);
-  return prefix.toString().length;
+function textOffsetFromRoot(root, container, offset) {
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  let total = 0;
+  let node;
+
+  if (container.nodeType === Node.TEXT_NODE) {
+    while ((node = walker.nextNode())) {
+      if (node === container) {
+        return total + Math.min(Math.max(0, offset), node.nodeValue.length);
+      }
+      total += node.nodeValue.length;
+    }
+    return total;
+  }
+
+  const boundaryNode = offset < container.childNodes.length ? container.childNodes[offset] : null;
+  while ((node = walker.nextNode())) {
+    if (boundaryNode) {
+      if (node === boundaryNode || (boundaryNode.compareDocumentPosition(node) & Node.DOCUMENT_POSITION_FOLLOWING)) {
+        break;
+      }
+    } else {
+      if (!container.contains(node) && (container.compareDocumentPosition(node) & Node.DOCUMENT_POSITION_FOLLOWING)) {
+        break;
+      }
+    }
+    total += node.nodeValue.length;
+  }
+  return total;
 }
 
-function selectedQuestionTextRange() {
+function getSelectionRangeWithin(root) {
   const selection = window.getSelection();
-  const root = app.querySelector('.question-content');
   if (!root || !selection || selection.rangeCount !== 1) return null;
   const range = selection.getRangeAt(0);
   if (range.collapsed || !root.contains(range.startContainer) || !root.contains(range.endContainer)) return null;
   try {
-    const start = textOffsetWithin(root, range.startContainer, range.startOffset);
-    const end = textOffsetWithin(root, range.endContainer, range.endOffset);
+    const start = textOffsetFromRoot(root, range.startContainer, range.startOffset);
+    const end = textOffsetFromRoot(root, range.endContainer, range.endOffset);
     return end > start ? { start, end } : null;
   } catch {
     return null;
   }
 }
 
+function getActiveHighlightTarget() {
+  const selection = window.getSelection();
+  if (!selection || selection.rangeCount !== 1) return null;
+  const range = selection.getRangeAt(0);
+  if (range.collapsed) return null;
+
+  const questionRoot = app.querySelector('.question-content');
+  if (questionRoot && questionRoot.contains(range.startContainer) && questionRoot.contains(range.endContainer)) {
+    const textRange = getSelectionRangeWithin(questionRoot);
+    if (textRange) {
+      return { target: 'question', root: questionRoot, range: textRange };
+    }
+  }
+
+  const materialRoot = app.querySelector('.material-content');
+  if (materialRoot && materialRoot.contains(range.startContainer) && materialRoot.contains(range.endContainer)) {
+    const textRange = getSelectionRangeWithin(materialRoot);
+    if (textRange) {
+      return { target: 'material', root: materialRoot, range: textRange };
+    }
+  }
+
+  return null;
+}
+
+function selectedQuestionTextRange() {
+  return getActiveHighlightTarget()?.range || null;
+}
+
+function materialHighlightKey(question) {
+  const material = materialForQuestion(question);
+  if (!material) return '';
+  const identity = material.identity || questionHighlightKey(question) || `index:${state.questionIndex}`;
+  return `material:${identity}`;
+}
+
 function highlightRangesFor(question) {
   return normalizeHighlightRanges(state.highlights[questionHighlightKey(question)]);
+}
+
+function materialHighlightRangesFor(question) {
+  const key = materialHighlightKey(question);
+  return key ? normalizeHighlightRanges(state.highlights[key]) : [];
 }
 
 function applyHighlights(root, ranges) {
@@ -211,13 +275,18 @@ function applyHighlights(root, ranges) {
 
 function restoreQuestionHighlights() {
   const question = currentQuestion();
-  const root = app.querySelector('.question-content');
-  if (question && root) applyHighlights(root, highlightRangesFor(question));
+  if (!question) return;
+  const questionRoot = app.querySelector('.question-content');
+  if (questionRoot) applyHighlights(questionRoot, highlightRangesFor(question));
+  const materialRoot = app.querySelector('.material-content');
+  if (materialRoot) applyHighlights(materialRoot, materialHighlightRangesFor(question));
 }
 
 function renderHighlightControls(question) {
-  const hasHighlights = highlightRangesFor(question).length > 0;
-  return `<div class="question-highlight-controls" aria-label="题干标注">
+  const hasQuestionHighlights = highlightRangesFor(question).length > 0;
+  const hasMaterialHighlights = materialHighlightRangesFor(question).length > 0;
+  const hasHighlights = hasQuestionHighlights || hasMaterialHighlights;
+  return `<div class="question-highlight-controls" aria-label="标注操作">
     <button class="text-button question-highlight-clear" type="button" data-action="clear-highlights" ${hasHighlights ? '' : 'disabled'}>清除本题标注</button>
   </div>`;
 }
@@ -225,8 +294,8 @@ function renderHighlightControls(question) {
 function updateHighlightControls() {
   const menu = app.querySelector('#highlight-float-menu');
   const selection = window.getSelection();
-  const hasSelection = Boolean(selectedQuestionTextRange());
-  if (!menu || !selection || !hasSelection) {
+  const activeTarget = getActiveHighlightTarget();
+  if (!menu || !selection || !activeTarget) {
     if (menu) menu.hidden = true;
     return;
   }
@@ -290,7 +359,7 @@ function formatDate(timestamp) {
 }
 
 function materialForQuestion(question, questions = currentItems()) {
-  const materials = state.exercise?.materials || [];
+  const materials = state.solutions?.materials || state.exercise?.materials || [];
   const indexes = Array.isArray(question?.materialIndexes) ? question.materialIndexes : [];
   const keys = [question?.materialId, ...(Array.isArray(question?.materialKeys) ? question.materialKeys : [])]
     .filter((value) => value != null && value !== '')
@@ -315,14 +384,14 @@ function materialForQuestion(question, questions = currentItems()) {
     return itemIdentity === identity;
   });
   const position = Math.max(0, related.indexOf(question));
-  return { content, shared: related.length > 1, position, total: related.length };
+  return { content, shared: related.length > 1, position, total: related.length, identity };
 }
 
 function renderMaterial(question, questions) {
   const material = materialForQuestion(question, questions);
   if (!material) return '';
   const summary = material.shared ? `共享材料 · 第 ${material.position + 1}/${material.total} 题` : '题目材料';
-  return `<details class="material-card" open><summary>${summary}</summary><div class="rich-text">${sanitizeHtml(material.content)}</div></details>`;
+  return `<details class="material-card" open><summary>${summary}</summary><div class="rich-text material-content">${sanitizeHtml(material.content)}</div></details>`;
 }
 
 function optionItems(question) {
@@ -727,6 +796,7 @@ app.addEventListener('input', (event) => {
 });
 
 document.addEventListener('selectionchange', updateHighlightControls);
+window.addEventListener('scroll', updateHighlightControls, true);
 
 app.addEventListener('mousedown', (event) => {
   if (event.target.closest('button[data-action="highlight-selection"]')) event.preventDefault();
@@ -798,19 +868,25 @@ app.addEventListener('click', (event) => {
     }
   }
   if (action === 'highlight-selection') {
-    const range = selectedQuestionTextRange();
+    const activeTarget = getActiveHighlightTarget();
     const question = currentQuestion();
-    if (range && question) {
-      const key = questionHighlightKey(question);
-      state.highlights[key] = normalizeHighlightRanges([...(state.highlights[key] || []), range]);
-      window.getSelection()?.removeAllRanges();
-      render();
+    if (activeTarget && question) {
+      const key = activeTarget.target === 'material'
+        ? materialHighlightKey(question)
+        : questionHighlightKey(question);
+      if (key) {
+        state.highlights[key] = normalizeHighlightRanges([...(state.highlights[key] || []), activeTarget.range]);
+        window.getSelection()?.removeAllRanges();
+        render();
+      }
     }
   }
   if (action === 'clear-highlights') {
     const question = currentQuestion();
     if (question) {
       delete state.highlights[questionHighlightKey(question)];
+      const matKey = materialHighlightKey(question);
+      if (matKey) delete state.highlights[matKey];
       window.getSelection()?.removeAllRanges();
       render();
     }

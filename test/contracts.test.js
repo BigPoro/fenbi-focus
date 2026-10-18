@@ -278,3 +278,19 @@ test('normalizes downloadable papers with an optional existing exercise', () => 
   assert.deepEqual(result, [{ id: 7, name: '2025年安徽省考行测', exerciseId: 88 }]);
 });
 
+test('normalizes and merges overlapping highlight ranges', () => {
+  const { normalizeHighlightRanges } = require('../src/contracts');
+  assert.deepEqual(normalizeHighlightRanges([
+    { start: 10, end: 20 },
+    { start: 5, end: 12 },
+    { start: 30, end: 40 },
+    { start: 20, end: 25 },
+    { start: 'bad', end: 99 },
+    { start: 50, end: 50 }
+  ]), [
+    { start: 5, end: 25 },
+    { start: 30, end: 40 }
+  ]);
+});
+
+

@@ -653,7 +653,7 @@ button:disabled {
 
 .material-card .rich-text {
   padding: 0 10px 10px;
-  color: var(--muted);
+  color: var(--vscode-foreground);
 }
 
 .question-card {
@@ -702,8 +702,10 @@ button:disabled {
 mark.question-highlight {
   border-radius: 2px;
   padding: 0 1px;
-  color: inherit;
+  color: var(--vscode-editor-foreground, var(--vscode-foreground));
   background: color-mix(in srgb, #ffd54f 62%, transparent);
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
 }
 
 /* 图片与公式样式 */
