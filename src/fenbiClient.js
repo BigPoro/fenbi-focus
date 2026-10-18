@@ -5,12 +5,14 @@ const {
   extractStaticUrl,
   normalizeCategories,
   normalizeCombinedQuestionSet,
+  normalizeCurrentExamCategory,
   normalizeCreatedExercise,
   normalizeCreatedExerciseKey,
   normalizeCurrentUser,
   normalizeErrorCategories,
   normalizeErrorQuestionIds,
   normalizeErrorSolutions,
+  normalizeEssayQuestionList,
   normalizeExercise,
   normalizeHistory,
   normalizePaperLabels,
@@ -24,6 +26,20 @@ const { getSubject } = require('./subjects');
 
 const API_QUERY = 'app=web&kav=100&av=100&hav=100&version=3.0.0.0';
 const CURRENT_API_QUERY = 'app=web&kav=125&av=127&hav=125&version=3.0.0.0';
+// 从已登录网页端综应列表的成功请求核验，综应题库使用独立的版本参数。
+const ESSAY_BROWSER_QUERY = 'app=web&kav=131&av=134&hav=128&version=3.0.0.0&deviceId=&gav=2&apcId=0';
+const ESSAY_BROWSER_HEADERS = Object.freeze({
+  Origin: 'https://www.fenbi.com',
+  Referer: 'https://www.fenbi.com/',
+  'Accept-Language': 'zh-CN,zh;q=0.9',
+  // 综应题库会校验浏览器上下文；此值与网页端请求保持同一客户端类别。
+  'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36'
+});
+const ESSAY_EXERCISE_HEADERS = Object.freeze({
+  ...ESSAY_BROWSER_HEADERS,
+  Origin: 'https://spa.fenbi.com',
+  Referer: 'https://spa.fenbi.com/'
+});
 const AUTHORIZED_HOSTS = new Set(['tiku.fenbi.com', 'login.fenbi.com', 'urlimg.fenbi.com']);
 const STATIC_HOST_SUFFIXES = ['.fbstatic.cn', '.fenbi.com'];
 const MAX_RESPONSE_BYTES = 12 * 1024 * 1024;
@@ -35,6 +51,29 @@ class FenbiHttpError extends Error {
     this.statusCode = statusCode;
     this.responseBody = responseBody;
   }
+}
+
+function redactSensitiveText(value) {
+  return String(value || '')
+    .replace(/(cookie|token|authorization|session(?:id)?)\s*[:=]\s*[^\s,;]+/gi, '$1=[已隐藏]')
+    .replace(/bearer\s+[a-z0-9._-]+/gi, 'Bearer [已隐藏]')
+    .slice(0, 200);
+}
+
+// 仅用于本地错误提示：保留服务端可公开的错误码/消息，不展示响应原文，避免误带出会话信息。
+function summarizeApiFailure(payload) {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return '';
+  const parts = [];
+  if (payload.code !== undefined && payload.code !== null) {
+    parts.push(`code=${redactSensitiveText(payload.code)}`);
+  }
+  for (const key of ['msg', 'message', 'error']) {
+    if (typeof payload[key] === 'string' && payload[key].trim()) {
+      parts.push(redactSensitiveText(payload[key].trim()));
+      break;
+    }
+  }
+  return parts.join('；');
 }
 
 function assertAuthorizedUrl(input) {
@@ -98,7 +137,8 @@ class FenbiClient {
     let body = '';
     const headers = {
       Accept: 'application/json, text/plain, */*',
-      'User-Agent': 'FenbiFocus/0.1 VSCode'
+      'User-Agent': 'FenbiFocus/0.1 VSCode',
+      ...(options.headers || {})
     };
     if (shouldAttachCookie(url)) {
       headers.Cookie = cookie;
@@ -137,6 +177,11 @@ class FenbiClient {
         });
         response.on('end', () => {
           const text = Buffer.concat(chunks).toString('utf8');
+          if (options.responseMetadata) {
+            options.responseMetadata.statusCode = response.statusCode || 0;
+            options.responseMetadata.contentType = String(response.headers['content-type'] || '').split(';')[0];
+            options.responseMetadata.byteLength = size;
+          }
           let parsed;
           try {
             parsed = text ? JSON.parse(text) : null;
@@ -146,7 +191,13 @@ class FenbiClient {
           }
           const statusCode = response.statusCode || 0;
           if (statusCode < 200 || statusCode >= 300) {
-            reject(new FenbiHttpError(`粉笔接口请求失败：HTTP ${statusCode}`, statusCode, parsed));
+            const failureSummary = summarizeApiFailure(parsed);
+            const endpoint = `${url.hostname}${url.pathname}`;
+            reject(new FenbiHttpError(
+              `粉笔接口请求失败：HTTP ${statusCode}（${endpoint}）${failureSummary ? `：${failureSummary}` : ''}`,
+              statusCode,
+              parsed
+            ));
             return;
           }
           resolve(parsed);
@@ -225,12 +276,49 @@ class FenbiClient {
     if (subject.categoryKind === 'pdpg') {
       path = `/api/shenlun/pdpg/categories?${API_QUERY}`;
     } else if (subject.categoryKind === 'etRuleQuestion') {
-      path = `/api/zhyynl/etRuleQuestion/categories?${API_QUERY}`;
+      const payload = await this.request('GET', `https://tiku.fenbi.com/api/zhyynl/categories?filter=keypoint&${ESSAY_BROWSER_QUERY}`, { headers: ESSAY_BROWSER_HEADERS });
+      return normalizeCategories(payload);
     } else if (subject.categoryKind === 'giant') {
       path = `/api/${subject.id}/categories?filter=giant&${API_QUERY}`;
     }
     const payload = await this.request('GET', `https://tiku.fenbi.com${path}`);
     return normalizeCategories(payload);
+  }
+
+  async currentExamCategory() {
+    const payload = await this.request('GET', `https://tiku.fenbi.com/activity/userexamcategory/getCurrent?noCacheTag=${Date.now()}&${ESSAY_BROWSER_QUERY}`, { headers: ESSAY_BROWSER_HEADERS });
+    return normalizeCurrentExamCategory(payload);
+  }
+
+  async essayQuestionList(questionType = 5, page = 0) {
+    // 网页或其他扩展可能随时改写服务端课程集；列表请求必须自行恢复综应上下文。
+    await this.changeSubject('zhyynl');
+    const examCategory = await this.currentExamCategory();
+    const safePage = Math.max(0, Number.isInteger(Number(page)) ? Number(page) : 0);
+    const responseMetadata = {};
+    const payload = await this.request('GET', `https://tiku.fenbi.com/api/zhyynl/etRuleQuestion/question-list?questionType=${Number(questionType)}&toPage=${safePage}&${ESSAY_BROWSER_QUERY}&examcatid=${examCategory.id}`, { headers: ESSAY_BROWSER_HEADERS, responseMetadata });
+    try {
+      return { ...normalizeEssayQuestionList(payload), examCategory };
+    } catch (error) {
+      const shape = payload === null ? 'null' : Array.isArray(payload) ? 'array' : typeof payload;
+      const keys = payload && typeof payload === 'object' && !Array.isArray(payload)
+        ? Object.keys(payload).slice(0, 8).join(',') || '无'
+        : '无';
+      throw new Error(`${error.message}（questionType=${Number(questionType)}，examcatid=${examCategory.id}，page=${safePage}；HTTP ${responseMetadata.statusCode || '未知'}，${responseMetadata.contentType || '未知类型'}，${responseMetadata.byteLength ?? '未知'} 字节；响应类型=${shape}，字段=${keys}）`);
+    }
+  }
+
+  async createEssayQuestionExercise(sheetId) {
+    const normalizedSheetId = Number(sheetId);
+    if (!Number.isInteger(normalizedSheetId) || normalizedSheetId <= 0) {
+      throw new Error('综应题目缺少有效的 sheetId');
+    }
+    await this.changeSubject('zhyynl');
+    const payload = await this.request('POST', `https://tiku.fenbi.com/api/zhyynl/exercises?${ESSAY_BROWSER_QUERY}`, {
+      form: { type: 26, sheetId: normalizedSheetId },
+      headers: ESSAY_BROWSER_HEADERS
+    });
+    return normalizeCreatedExerciseKey(payload);
   }
 
   async subjectUnfinishedExercise(subjectId) {
@@ -335,16 +423,19 @@ class FenbiClient {
 
   async exerciseDocument(subjectId, combineKey) {
     const subject = getSubject(subjectId);
-    const metadata = await this.request('GET', `https://tiku.fenbi.com/combine/exercise/getExercise?format=html&key=${encodeURIComponent(combineKey)}&routecs=${subject.id}&${API_QUERY}`);
+    const isEssayBrowser = subject.id === 'zhyynl';
+    const query = isEssayBrowser ? CURRENT_API_QUERY : API_QUERY;
+    const requestOptions = isEssayBrowser ? { headers: ESSAY_EXERCISE_HEADERS } : {};
+    const metadata = await this.request('GET', `https://tiku.fenbi.com/combine/exercise/getExercise?format=html&key=${encodeURIComponent(combineKey)}&routecs=${subject.id}&${query}`, requestOptions);
     const staticUrl = extractStaticUrl(metadata, '练习');
     const document = await this.request('GET', withQuery(staticUrl, {
       routecs: subject.id,
       type: 1,
       app: 'web',
-      kav: 121,
-      av: 121,
-      hav: 121
-    }));
+      kav: isEssayBrowser ? 125 : 121,
+      av: isEssayBrowser ? 127 : 121,
+      hav: isEssayBrowser ? 125 : 121
+    }), requestOptions);
     const questionSet = normalizeCombinedQuestionSet(document, 'questions');
     return {
       ...questionSet,
@@ -495,6 +586,7 @@ module.exports = {
   FenbiHttpError,
   assertAuthorizedUrl,
   encodeForm,
+  summarizeApiFailure,
   shouldAttachCookie
 };
 

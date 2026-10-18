@@ -215,6 +215,31 @@ button:disabled {
   font-size: 0.8em;
 }
 
+.essay-filter {
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+  margin: 0 0 10px;
+  padding-bottom: 2px;
+}
+
+.essay-filter button {
+  flex: 0 0 auto;
+  border: 1px solid var(--border);
+  background: var(--surface);
+}
+
+.essay-filter button.active {
+  border-color: var(--vscode-button-background);
+  background: var(--vscode-button-background);
+  color: var(--vscode-button-foreground);
+}
+
+.essay-subfilter {
+  border-top: 1px solid var(--border);
+  padding-top: 10px;
+}
+
 .section-card,
 .question-card,
 .material-card,

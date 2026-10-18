@@ -2,7 +2,7 @@
   "name": "fenbi-focus",
   "displayName": "公考专注刷题",
   "description": "在 VS Code 中以低干扰方式使用个人粉笔账号刷题，并安全整理错题。",
-  "version": "0.3.23",
+  "version": "0.3.40",
   "publisher": "local-exam-tools",
   "license": "MIT",
   "engines": {
@@ -22,7 +22,8 @@
     "onView:fenbiFocus.practiceView",
     "onCommand:fenbiFocus.setCookie",
     "onCommand:fenbiFocus.clearCookie",
-    "onCommand:fenbiFocus.refresh"
+    "onCommand:fenbiFocus.refresh",
+    "onCommand:fenbiFocus.diagnoseEssayList"
   ],
   "contributes": {
     "viewsContainers": {
@@ -55,6 +56,10 @@
       {
         "command": "fenbiFocus.refresh",
         "title": "公考专注刷题：刷新"
+      },
+      {
+        "command": "fenbiFocus.diagnoseEssayList",
+        "title": "公考专注刷题：诊断综应列表"
       }
     ],
     "menus": {

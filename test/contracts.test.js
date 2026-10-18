@@ -5,12 +5,14 @@ const assert = require('node:assert/strict');
 const {
   ContractError,
   normalizeCategories,
+  normalizeCurrentExamCategory,
   normalizeCombinedQuestionSet,
   normalizeCurrentUser,
   normalizeExercise,
   normalizeErrorCategories,
   normalizeErrorQuestionIds,
   normalizeErrorSolutions,
+  normalizeEssayQuestionList,
   normalizeHistory,
   normalizePaperLabels,
   normalizePapers,
@@ -20,6 +22,11 @@ const {
 test('normalizes nested categories', () => {
   const result = normalizeCategories({ data: [{ id: 1, name: '判断推理', children: [{ id: 2, name: '图形推理' }] }] });
   assert.equal(result[0].children[0].name, '图形推理');
+});
+
+test('normalizes the zhyynl category envelope and type ids used by the web list', () => {
+  const result = normalizeCategories({ data: { baseKeypointVOS: [{ type: 26, name: '实务处理题', children: [{ type: 261, name: '谈话沟通类' }] }] } });
+  assert.deepEqual(result, [{ id: 26, name: '实务处理题', count: 0, answerCount: 0, children: [{ id: 261, name: '谈话沟通类', count: 0, answerCount: 0, children: [] }] }]);
 });
 
 test('rejects category payload without an array', () => {
@@ -38,6 +45,75 @@ test('requires the expected question collection', () => {
 
 test('normalizes current user display name', () => {
   assert.deepEqual(normalizeCurrentUser({ id: 1, nickname: '测试用户' }), { id: '1', name: '测试用户' });
+});
+
+test('normalizes the selected exam category for the essay question list', () => {
+  assert.deepEqual(normalizeCurrentExamCategory({ data: {
+    examCategoryId: 1000011,
+    name: '联考A类',
+    path: ['事考', '笔试', '海南', '联考A类']
+  } }), { id: 1000011, name: '联考A类', path: ['事考', '笔试', '海南', '联考A类'] });
+});
+
+test('normalizes browseable essay questions with their existing exercise keys', () => {
+  assert.deepEqual(normalizeEssayQuestionList({
+    list: [{
+      questionId: 18757890,
+      exerciseKey: '1_11e_2j4mqpj',
+      content: '请归纳概括。',
+      source: '江苏事业单位统考第1题',
+      sheetMeta: { exerciseCount: 4497 },
+      status: 0
+    }],
+    pageInfo: { currentPage: 0, totalItem: 315, totalPage: 21 }
+  }), {
+    items: [{ questionId: 18757890, exerciseKey: '1_11e_2j4mqpj', sheetId: 0, content: '请归纳概括。', source: '江苏事业单位统考第1题', completedCount: 4497, status: 0 }],
+    page: { current: 0, total: 315, totalPages: 21 }
+  });
+});
+
+test('skips non-question cards and accepts nested essay exercise keys', () => {
+  const result = normalizeEssayQuestionList({
+    list: [
+      { content: '活动卡片' },
+      { id: 8, question: { content: '请作答。' }, exercise: { key: '1_nested_key' } }
+    ],
+    pageInfo: { currentPage: 0, totalItem: 2, totalPage: 1 }
+  });
+  assert.deepEqual(result.items, [{ questionId: 8, exerciseKey: '1_nested_key', sheetId: 8, content: '请作答。', source: '', completedCount: 0, status: 0 }]);
+});
+
+test('keeps a list item without an exercise key when it can be opened by sheetId', () => {
+  const result = normalizeEssayQuestionList({ list: [{ id: 99, questionId: 7, content: '单一题' }], pageInfo: {} });
+  assert.deepEqual(result.items, [{ questionId: 7, exerciseKey: '', sheetId: 99, content: '单一题', source: '', completedCount: 0, status: 0 }]);
+});
+
+test('accepts a nested list envelope returned by some zhyynl category combinations', () => {
+  const result = normalizeEssayQuestionList({ data: { list: [{ id: 21, content: '题目' }], pageInfo: { totalItem: 1 } } });
+  assert.equal(result.items[0].sheetId, 21);
+  assert.equal(result.page.total, 1);
+});
+
+test('accepts essay items returned directly in data while preserving outer page info', () => {
+  const result = normalizeEssayQuestionList({
+    data: [{ id: 31, questionId: 301, content: '数组题目' }],
+    pageInfo: { currentPage: 2, totalItem: 37, totalPage: 3 }
+  });
+  assert.equal(result.items[0].sheetId, 31);
+  assert.deepEqual(result.page, { current: 2, total: 37, totalPages: 3 });
+});
+
+test('accepts a direct essay item array', () => {
+  const result = normalizeEssayQuestionList([{ id: 41, content: '直接数组题目' }]);
+  assert.equal(result.items[0].sheetId, 41);
+  assert.deepEqual(result.page, { current: 0, total: 0, totalPages: 0 });
+});
+
+test('preserves the service code and message when an essay category has no list payload', () => {
+  assert.throws(
+    () => normalizeEssayQuestionList({ code: 1, msg: '当前分类暂无题目', data: null }),
+    /code=1：当前分类暂无题目/
+  );
 });
 
 test('keeps every server setting needed when changing question count', () => {

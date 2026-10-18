@@ -4,7 +4,7 @@ const path = require('node:path');
 const crypto = require('node:crypto');
 const vscode = require('vscode');
 const { FenbiClient } = require('./src/fenbiClient');
-const { getSubject, listSubjects } = require('./src/subjects');
+const { getSubject, listSubjects, listEssayQuestionCategories } = require('./src/subjects');
 
 const COOKIE_SECRET_KEY = 'fenbiFocus.cookie';
 const SUBJECT_STATE_KEY = 'fenbiFocus.subject';
@@ -37,6 +37,7 @@ class PracticeViewProvider {
     this.context = context;
     this.view = undefined;
     this.current = undefined;
+    this.essayQuestionRequestId = 0;
     this.client = new FenbiClient(() => context.secrets.get(COOKIE_SECRET_KEY));
   }
 
@@ -76,6 +77,12 @@ class PracticeViewProvider {
           break;
         case 'startExercise':
           await this.startExercise(message.subjectId, asPositiveInteger(message.keypointId, '知识点 ID'), message.questionType);
+          break;
+        case 'openEssayQuestionList':
+          await this.openEssayQuestionList(message.page, message.categoryId);
+          break;
+        case 'openEssayQuestion':
+          await this.openEssayQuestion({ exerciseKey: message.exerciseKey, sheetId: message.sheetId });
           break;
         case 'setQuestionCount':
           await this.setQuestionCount(message.questionCount);
@@ -139,7 +146,12 @@ class PracticeViewProvider {
       return;
     }
     this.post('loading', { message: `正在读取${subject.label}…` });
-    const baseRequests = [this.client.currentUser(), this.client.subjectCategories(subject.id)];
+    // 本地记住的科目不会自动恢复粉笔服务端课程集；先同步，再读取依赖课程上下文的数据。
+    await this.client.changeSubject(subject.id);
+    const baseRequests = [
+      this.client.currentUser(),
+      subject.id === 'zhyynl' ? Promise.resolve(listEssayQuestionCategories()) : this.client.subjectCategories(subject.id)
+    ];
     if (subject.answerMode === 'interview') {
       const [user, categories] = await Promise.all(baseRequests);
       this.post('state', {
@@ -161,6 +173,10 @@ class PracticeViewProvider {
       this.client.history(subject.id, 15),
       this.client.userQuestionInfo()
     ]);
+    if (subject.id === 'zhyynl' && !categories.some((category) =>
+      category.id === this.essayQuestionCategoryId || category.children.some((child) => child.id === this.essayQuestionCategoryId))) {
+      this.essayQuestionCategoryId = categories[0].id;
+    }
     this.post('state', {
       authenticated: true,
       user,
@@ -177,8 +193,8 @@ class PracticeViewProvider {
 
   async changeSubject(subjectId) {
     const subject = getSubject(String(subjectId || ''));
+    this.essayQuestionRequestId += 1;
     this.post('loading', { message: `正在切换到${subject.label}…` });
-    await this.client.changeSubject(subject.id);
     await this.context.workspaceState.update(SUBJECT_STATE_KEY, subject.id);
     this.current = undefined;
     await this.refresh(subject.id);
@@ -217,6 +233,11 @@ class PracticeViewProvider {
 
   async startExercise(subjectId, keypointId, questionType) {
     const subject = getSubject(String(subjectId || ''));
+    if (subject.practiceMode === 'browser') {
+      // 综应网页端并不通过 /api/zhyynl/exercises 生成知识点练习；改为打开已有题目列表。
+      await this.openEssayQuestionList(0);
+      return;
+    }
     if (subject.answerMode === 'interview') {
       this.post('loading', { message: '正在读取面试题…' });
       const document = await this.client.interviewDocument(subject.id, keypointId);
@@ -241,8 +262,54 @@ class PracticeViewProvider {
     await this.loadExercise(subject, combineKey, questionType);
   }
 
+  async openEssayQuestionList(page, categoryId) {
+    const selectedCategoryId = Number(categoryId || this.essayQuestionCategoryId || 1);
+    if (!Number.isInteger(selectedCategoryId) || selectedCategoryId <= 0) {
+      throw new Error('综应题型无效');
+    }
+    this.essayQuestionCategoryId = selectedCategoryId;
+    const requestId = ++this.essayQuestionRequestId;
+    this.post('loading', { message: '正在读取综应题目列表…' });
+    try {
+      const result = await this.client.essayQuestionList(selectedCategoryId, page);
+      if (requestId === this.essayQuestionRequestId) {
+        this.post('essayQuestionList', { ...result, categoryId: selectedCategoryId });
+      }
+    } catch (error) {
+      if (requestId === this.essayQuestionRequestId) throw error;
+    }
+  }
+
+  async openEssayQuestion(value) {
+    this.essayQuestionRequestId += 1;
+    const subject = getSubject('zhyynl');
+    this.post('loading', { message: '正在读取综应题目…' });
+    const existingKey = String(value?.exerciseKey || '').trim();
+    const combineKey = existingKey
+      ? asCombineKey(existingKey)
+      : await this.client.createEssayQuestionExercise(value?.sheetId);
+    const document = await this.client.exerciseDocument(subject.id, combineKey);
+    this.current = {
+      subjectId: subject.id,
+      subject,
+      answerMode: subject.answerMode,
+      combineKey,
+      questions: document.items,
+      materials: document.materials,
+      userAnswers: document.userAnswers,
+      readOnly: true,
+      practiceKind: 'essay-browser',
+      startedAt: Date.now()
+    };
+    this.post('exercise', this.current);
+  }
+
   async startQuickExercise(subjectId) {
     const subject = getSubject(String(subjectId || ''));
+    if (subject.practiceMode === 'browser') {
+      await this.openEssayQuestionList(0);
+      return;
+    }
     this.post('loading', { message: '正在生成快速练习…' });
     const combineKey = await this.client.createQuickExercise(subject.id);
     await this.loadExercise(subject, combineKey);
@@ -250,6 +317,10 @@ class PracticeViewProvider {
 
   async startSmartExercise(subjectId, yearScope) {
     const subject = getSubject(String(subjectId || ''));
+    if (subject.practiceMode === 'browser') {
+      await this.openEssayQuestionList(0);
+      return;
+    }
     let selectedYearScope = Number(yearScope);
     if (![0, 5, 10].includes(selectedYearScope)) {
       const choice = await vscode.window.showQuickPick([
@@ -454,7 +525,15 @@ function activate(context) {
     vscode.window.registerWebviewViewProvider('fenbiFocus.practiceView', provider, { webviewOptions: { retainContextWhenHidden: true } }),
     vscode.commands.registerCommand('fenbiFocus.setCookie', () => provider.setCookie()),
     vscode.commands.registerCommand('fenbiFocus.clearCookie', () => provider.clearCookie()),
-    vscode.commands.registerCommand('fenbiFocus.refresh', () => provider.refresh())
+    vscode.commands.registerCommand('fenbiFocus.refresh', () => provider.refresh()),
+    vscode.commands.registerCommand('fenbiFocus.diagnoseEssayList', async () => {
+      try {
+        const result = await provider.client.essayQuestionList(1, 0);
+        await vscode.window.showInformationMessage(`综应列表诊断：案例分析题第 1 页读取 ${result.items.length} 题，考试类别 ${result.examCategory.id}`);
+      } catch (error) {
+        await vscode.window.showErrorMessage(`综应列表诊断：${safeMessage(error)}`, { modal: true });
+      }
+    })
   );
 }
 

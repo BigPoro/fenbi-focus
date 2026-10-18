@@ -31,12 +31,13 @@ function requireArray(value, label) {
 
 function normalizeCategories(payload) {
   const data = unwrapData(payload);
-  return requireArray(data, '题型目录').map(normalizeCategory);
+  const items = Array.isArray(data) ? data : data?.baseKeypointVOS;
+  return requireArray(items, '题型目录').map(normalizeCategory);
 }
 
 function normalizeCategory(item) {
   const source = requireObject(item, '题型目录项');
-  const id = Number(source.id);
+  const id = Number(source.id ?? source.type);
   if (!Number.isFinite(id)) {
     throw new ContractError('题型目录项缺少有效 id');
   }
@@ -132,6 +133,78 @@ function normalizeHistory(payload) {
       sheetType: Number(sheet.type || 0)
     };
   });
+}
+
+function normalizeCurrentExamCategory(payload) {
+  const data = requireObject(unwrapData(payload), '当前考试类别');
+  const id = Number(data.examCategoryId);
+  if (!Number.isInteger(id) || id <= 0) {
+    throw new ContractError('当前考试类别缺少有效 examCategoryId');
+  }
+  return {
+    id,
+    name: String(data.name || ''),
+    path: Array.isArray(data.path) ? data.path.map(String).filter(Boolean) : []
+  };
+}
+
+function normalizeEssayQuestionList(payload) {
+  const initial = unwrapData(payload);
+  // 粉笔该接口在不同题型/账号上下文下会返回 list、data.list，或把题目数组直接放在 data 中。
+  // 数组形态仍使用外层 pageInfo，避免把一页 15 条误判为完整结果。
+  const candidates = [initial, initial?.data, payload].filter((value) => value && typeof value === 'object' && !Array.isArray(value));
+  let data = candidates.find((value) => Array.isArray(value.list));
+  if (!data && Array.isArray(initial)) {
+    const outerPageInfo = payload && typeof payload === 'object' && !Array.isArray(payload) && payload.pageInfo;
+    data = { list: initial, pageInfo: outerPageInfo };
+  } else if (!data && Array.isArray(payload)) {
+    data = { list: payload, pageInfo: undefined };
+  }
+  if (!data) {
+    const code = payload && typeof payload === 'object' && payload.code != null ? ` code=${String(payload.code).slice(0, 20)}` : '';
+    const message = payload && typeof payload === 'object' && typeof payload.msg === 'string' ? `：${payload.msg.slice(0, 120)}` : '';
+    const keys = initial && typeof initial === 'object' && !Array.isArray(initial)
+      ? `（返回字段：${Object.keys(initial).slice(0, 12).join(', ') || '无'}）`
+      : '';
+    throw new ContractError(`综应题目列表未返回 list${code}${message}${keys}`);
+  }
+  const list = requireArray(data.list, '综应题目列表');
+  const pageInfo = data.pageInfo && typeof data.pageInfo === 'object' ? data.pageInfo : {};
+  // 网页端对无现成练习 key 的单一题，会使用该条目的 sheetId 创建 type=26 练习后打开。
+  const items = list.flatMap((item) => {
+    const source = requireObject(item, '综应题目项');
+    const exerciseKey = String(
+      source.exerciseKey
+      || source.exercise?.key
+      || source.exercise?.exerciseKey
+      || source.sheetMeta?.exerciseKey
+      || source.sheet?.key
+      || source.key
+      || ''
+    ).trim();
+    const sheetId = Number(source.id || source.sheetId || source.sheet?.id || source.sheetMeta?.id || source.sheetMeta?.sheetId || 0);
+    if (!exerciseKey && !sheetId) return [];
+    return [{
+      questionId: Number(source.questionId || source.id || 0),
+      exerciseKey,
+      sheetId,
+      content: String(source.content || source.question?.content || ''),
+      source: String(source.source || source.sheetMeta?.source || ''),
+      completedCount: Number(source.sheetMeta?.exerciseCount || source.exercise?.exerciseCount || 0),
+      status: Number(source.status || 0)
+    }];
+  });
+  if (!items.length && list.length) {
+    throw new ContractError('当前页没有可直接打开的综应题目');
+  }
+  return {
+    items,
+    page: {
+      current: Math.max(0, Number(pageInfo.currentPage || 0)),
+      total: Math.max(0, Number(pageInfo.totalItem || 0)),
+      totalPages: Math.max(0, Number(pageInfo.totalPage || 0))
+    }
+  };
 }
 
 function collectQuestionIds(value) {
@@ -366,6 +439,7 @@ module.exports = {
   isFormulaImage,
   normalizeImageUrl,
   normalizeCategories,
+  normalizeCurrentExamCategory,
   normalizeCombinedQuestionSet,
   normalizeCreatedExercise,
   normalizeCreatedExerciseKey,
@@ -374,6 +448,7 @@ module.exports = {
   normalizeErrorCategories,
   normalizeErrorQuestionIds,
   normalizeErrorSolutions,
+  normalizeEssayQuestionList,
   normalizeHistory,
   normalizePaperLabels,
   normalizePapers,
