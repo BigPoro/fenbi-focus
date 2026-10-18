@@ -595,9 +595,14 @@ function renderReviewOptions(question, selected, correctAnswer) {
 function renderEssayAnswer() {
   const saved = getUserAnswer(state.questionIndex);
   const draft = state.drafts[state.questionIndex] ?? saved;
+  const isZhyynl = state.subjectId === 'zhyynl' || state.exercise?.subjectId === 'zhyynl';
+  const wordCount = String(draft || '').length;
   return `<div class="essay-answer">
-    <label for="essay-input">我的作答</label>
-    <textarea id="essay-input" rows="10" placeholder="在这里整理申论作答…">${escapeText(draft)}</textarea>
+    <div style="display:flex;justify-content:space-between;align-items:center;">
+      <label for="essay-input">我的作答</label>
+      <small class="muted">${wordCount} 字</small>
+    </div>
+    <textarea id="essay-input" rows="10" placeholder="${isZhyynl ? '在这里整理综应作答…' : '在这里整理申论作答…'}">${escapeText(draft)}</textarea>
     <button class="primary" data-action="save-essay" ${String(draft).trim() ? '' : 'disabled'}>保存本题作答</button>
   </div>`;
 }
@@ -609,6 +614,7 @@ function renderQuestion() {
     return '<section class="empty-card"><p>没有可展示的题目。</p><button data-action="home">返回目录</button></section>';
   }
   const selected = getUserAnswer(state.questionIndex);
+  const isEssay = state.exercise.answerMode === 'essay';
   return `<header class="practice-header">
       <button class="text-button" data-action="home">‹ 目录</button>
       <span><strong>${state.questionIndex + 1}</strong> / ${questions.length}</span>
@@ -618,7 +624,7 @@ function renderQuestion() {
     <article class="question-card">
       <div class="rich-text question-content">${sanitizeHtml(question.content)}</div>
       ${renderHighlightControls(question)}
-      ${state.exercise.readOnly ? '' : (state.exercise.answerMode === 'essay' ? renderEssayAnswer() : renderObjectiveAnswer(question, selected))}
+      ${isEssay ? renderEssayAnswer() : (state.exercise.readOnly ? '' : renderObjectiveAnswer(question, selected))}
     </article>
     ${renderQuestionNav(questions.length)}`;
 }
@@ -797,6 +803,8 @@ app.addEventListener('input', (event) => {
     state.drafts[state.questionIndex] = event.target.value;
     const saveButton = app.querySelector('button[data-action="save-essay"]');
     if (saveButton) saveButton.disabled = !event.target.value.trim();
+    const countBadge = app.querySelector('.essay-answer small');
+    if (countBadge) countBadge.textContent = `${event.target.value.length} 字`;
   }
 });
 

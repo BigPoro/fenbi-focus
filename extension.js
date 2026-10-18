@@ -322,7 +322,7 @@ class PracticeViewProvider {
       questions: document.items,
       materials: document.materials,
       userAnswers: document.userAnswers,
-      readOnly: true,
+      readOnly: false,
       practiceKind: 'essay-browser',
       startedAt: Date.now()
     };
