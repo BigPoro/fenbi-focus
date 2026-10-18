@@ -5,6 +5,14 @@
   "version": "0.3.47",
   "publisher": "local-exam-tools",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/BigPoro/fenbi-focus.git"
+  },
+  "bugs": {
+    "url": "https://github.com/BigPoro/fenbi-focus/issues"
+  },
+  "homepage": "https://github.com/BigPoro/fenbi-focus#readme",
   "engines": {
     "vscode": "^1.96.0"
   },
