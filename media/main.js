@@ -33,6 +33,7 @@ const state = {
 
 const ALLOWED_TAGS = new Set(['P', 'DIV', 'SPAN', 'BR', 'STRONG', 'B', 'EM', 'I', 'U', 'SUB', 'SUP', 'UL', 'OL', 'LI', 'TABLE', 'THEAD', 'TBODY', 'TR', 'TD', 'TH', 'IMG']);
 const OPTION_LABELS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'.split('');
+let practiceTimerInterval = null;
 
 function post(command, payload = {}) {
   vscode.postMessage({ command, ...payload });
@@ -373,9 +374,9 @@ function currentQuestion() {
 function remoteAnswer(index) {
   const question = currentItems()[index];
   const answerMap = state.exercise?.userAnswers || {};
-  const answer = answerMap[String(question?.globalId || question?.id || '')]?.answer
-    || answerMap[index]?.answer
-    || question?.userAnswer;
+  const questionId = question?.globalId ?? question?.id;
+  const record = questionId == null || questionId === '' ? answerMap[index] : answerMap[String(questionId)];
+  const answer = record?.answer ?? question?.userAnswer;
   if (typeof answer === 'string' || typeof answer === 'number') return String(answer);
   if (!answer || typeof answer !== 'object') return '';
   const nested = answer.answer;
@@ -647,6 +648,31 @@ function renderEssayAnswer() {
   </div>`;
 }
 
+function practiceElapsedTime() {
+  const seconds = Math.max(0, Math.floor((Date.now() - state.exercise.startedAt) / 1000));
+  const minutes = Math.floor(seconds / 60);
+  const hours = Math.floor(minutes / 60);
+  const parts = [minutes % 60, seconds % 60];
+  if (hours) parts.unshift(hours);
+  return parts.map((part) => String(part).padStart(2, '0')).join(':');
+}
+
+function renderPracticeTimer() {
+  if (state.solutions || !state.exercise || state.exercise.readOnly || !Number.isFinite(state.exercise.startedAt)) return '';
+  return `<small id="practice-timer" class="practice-timer" role="timer" aria-live="off" title="本次练习用时">用时 ${practiceElapsedTime()}</small>`;
+}
+
+function updatePracticeTimer() {
+  const timer = document.getElementById('practice-timer');
+  if (!timer || state.solutions || !state.exercise || state.exercise.readOnly) {
+    if (practiceTimerInterval !== null) clearInterval(practiceTimerInterval);
+    practiceTimerInterval = null;
+    return;
+  }
+  timer.textContent = `用时 ${practiceElapsedTime()}`;
+  if (practiceTimerInterval === null) practiceTimerInterval = setInterval(updatePracticeTimer, 1000);
+}
+
 function renderQuestion() {
   const questions = state.exercise?.questions || [];
   const question = questions[state.questionIndex];
@@ -658,7 +684,7 @@ function renderQuestion() {
   const showSubmit = !state.exercise.readOnly && !isEssay && state.exercise.practiceKind !== 'essay-browser';
   return `<header class="practice-header">
       <button class="text-button" data-action="home">‹ 目录</button>
-      <span><strong>${state.questionIndex + 1}</strong> / ${questions.length}</span>
+      <span class="practice-progress"><span><strong>${state.questionIndex + 1}</strong> / ${questions.length}</span>${renderPracticeTimer()}</span>
       ${showSubmit ? '<button class="primary compact-button" data-action="submit">交卷</button>' : (state.exercise.readOnly ? '<small>只读查看</small>' : '<span></span>')}
     </header>
     ${renderMaterial(question, questions)}
@@ -724,9 +750,20 @@ function renderSolution() {
 }
 
 function renderQuestionNav(total) {
+  const showResults = Boolean(state.solutions) && !['essay', 'interview'].includes(state.exercise?.answerMode);
+  const labels = { correct: '回答正确', wrong: '回答错误', unanswered: '未作答', answered: '已作答' };
+  const buttons = Array.from({ length: total }, (_, index) => {
+    const answer = getUserAnswer(index);
+    const correctAnswer = showResults ? solutionAnswer(currentItems()[index]) : '';
+    const status = answer === '' ? 'unanswered'
+      : showResults && correctAnswer !== '' ? (answer === correctAnswer ? 'correct' : 'wrong') : 'answered';
+    const current = index === state.questionIndex;
+    const label = `第 ${index + 1} 题 · ${labels[status]}`;
+    return `<button title="${label}" aria-label="${label}" ${current ? 'aria-current="step"' : ''} data-action="goto" data-index="${index}" class="dot ${status} ${current ? 'current' : ''}">${index + 1}</button>`;
+  }).join('');
   return `<nav class="question-nav">
     <button data-action="previous" ${state.questionIndex === 0 ? 'disabled' : ''}>上一题</button>
-    <div class="progress-dots">${Array.from({ length: total }, (_, index) => `<button title="第 ${index + 1} 题" data-action="goto" data-index="${index}" class="dot ${getUserAnswer(index) !== '' ? 'answered' : ''} ${index === state.questionIndex ? 'current' : ''}">${index + 1}</button>`).join('')}</div>
+    <div class="progress-dots">${buttons}</div>
     <button data-action="next" ${state.questionIndex >= total - 1 ? 'disabled' : ''}>下一题</button>
   </nav>`;
 }
@@ -804,6 +841,7 @@ function render(options = {}) {
     ? '<div id="highlight-float-menu" class="highlight-float-menu" role="toolbar" aria-label="选中文字操作" hidden><button class="primary compact-button" type="button" data-action="highlight-selection">高亮</button></div>'
     : '';
   app.innerHTML = `${state.loading ? `<div class="status-banner loading"><span></span>${escapeText(state.loading)}</div>` : ''}${state.error ? `<div class="status-banner error">${escapeText(state.error)}</div>` : ''}${content}${floatingHighlightMenu}`;
+  updatePracticeTimer();
   document.body.classList.toggle('has-question-nav', Boolean(state.exercise || state.solutions));
   enhanceRenderedImages();
   restoreQuestionHighlights();

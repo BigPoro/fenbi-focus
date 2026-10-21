@@ -620,6 +620,20 @@ button:disabled {
   margin-bottom: 9px;
 }
 
+.practice-progress {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+}
+
+.practice-timer {
+  color: var(--muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
 .text-button {
   border-color: transparent;
   padding-inline: 4px;
@@ -935,7 +949,7 @@ img[src*="formulas"] {
   gap: 4px;
   max-height: 78px;
   overflow-y: auto;
-  padding-right: 2px;
+  padding: 4px;
 }
 
 .dot {
@@ -957,6 +971,31 @@ img[src*="formulas"] {
   border-color: var(--accent);
   background: color-mix(in srgb, var(--accent) 16%, transparent);
   color: var(--vscode-foreground);
+}
+
+.dot.correct {
+  border-color: var(--vscode-testing-iconPassed, #388a34);
+  background: color-mix(in srgb, var(--vscode-testing-iconPassed, #388a34) 16%, var(--surface));
+  color: var(--vscode-testing-iconPassed, #388a34);
+}
+
+.dot.wrong {
+  border-color: var(--vscode-testing-iconFailed, #e51400);
+  background: color-mix(in srgb, var(--vscode-testing-iconFailed, #e51400) 16%, var(--surface));
+  color: var(--vscode-testing-iconFailed, #e51400);
+}
+
+.dot.current.correct,
+.dot.current.wrong,
+.dot.current.unanswered {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.dot.unanswered {
+  border-color: var(--border);
+  background: transparent;
+  color: var(--muted);
 }
 
 .status-banner {
