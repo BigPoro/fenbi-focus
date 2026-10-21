@@ -4,6 +4,54 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { FenbiClient, assertAuthorizedUrl, encodeForm, shouldAttachCookie, summarizeApiFailure } = require('../src/fenbiClient');
 
+test('solution document joins site statistics by globalId instead of response order', async () => {
+  const requests = [];
+  const client = new FenbiClient(async () => 'cookie');
+  client.request = async (method, url) => {
+    requests.push(url);
+    if (url.includes('/exercise/getSolution')) return { data: {
+      staticUrl: { urls: ['https://tiku.fenbi.com/combine/static/solution'] },
+      switchVO: { requestKey: 'stats+key' }, userAnswers: {}
+    } };
+    if (url.includes('/question/getMeta')) return { data: { 302: { correctRatio: 52.4, mostWrongAnswer: { choice: '0' } }, 301: { correctRatio: 0 } } };
+    return { solutions: [{ globalId: 301 }, { globalId: 302 }, { globalId: 303 }] };
+  };
+  const result = await client.solutionDocument('xingce', 'exercise-key');
+  assert.match(requests[2], /\/combine\/question\/getMeta\?requestKey=stats%2Bkey&routecs=xingce&/);
+  assert.equal(result.items[0].questionStatistics.correctRatio, 0);
+  assert.equal(result.items[1].questionStatistics.correctRatio, 52.4);
+  assert.equal(result.items[1].questionStatistics.mostWrongAnswer.choice, '0');
+  assert.equal(result.items[2].questionStatistics, null);
+});
+
+test('statistics failure or missing request key keeps the solution available without inventing a rate', async () => {
+  const client = new FenbiClient(async () => 'cookie');
+  client.request = async () => { throw new Error('统计接口不可用'); };
+  const items = [{ globalId: 301, solution: '解析内容' }];
+  const failed = await client.solutionStatistics('xingce', items, 'stats-key');
+  assert.equal(failed[0].statisticsStatus, 'failed');
+  assert.equal(failed[0].solution, '解析内容');
+  assert.equal(failed[0].questionStatistics, undefined);
+  const missing = await client.solutionStatistics('xingce', items);
+  assert.equal(missing[0].statisticsStatus, 'unavailable');
+});
+
+test('wrong-question solutions also load site statistics using the official request key', async () => {
+  const requests = [];
+  const client = new FenbiClient(async () => 'cookie');
+  client.request = async (method, url) => {
+    requests.push(url);
+    if (url.includes('/questionIds?')) return [301];
+    if (url.includes('/universal/auth/solutions?')) return { solutions: [{ globalId: 301, solution: '错题解析' }] };
+    if (url.includes('/question/auth/getSolution?')) return { data: { switchVO: { requestKey: 'error-key' } } };
+    return { data: { 301: { correctRatio: 65 } } };
+  };
+  const result = await client.errorSolutions('xingce', 10);
+  assert.match(requests[2], /\/combine\/question\/auth\/getSolution\?questionIds=301&routecs=xingce&type=1&format=html&/);
+  assert.match(requests[3], /requestKey=error-key&routecs=xingce&/);
+  assert.equal(result.items[0].questionStatistics.correctRatio, 65);
+});
+
 test('allows only explicit authenticated Fenbi hosts', () => {
   assert.equal(assertAuthorizedUrl('https://tiku.fenbi.com/api/x').hostname, 'tiku.fenbi.com');
   assert.equal(assertAuthorizedUrl('https://login.fenbi.com/api/x').hostname, 'login.fenbi.com');

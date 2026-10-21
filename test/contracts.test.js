@@ -16,8 +16,30 @@ const {
   normalizeHistory,
   normalizePaperLabels,
   normalizePapers,
-  normalizeQuestionSet
+  normalizeQuestionSet,
+  normalizeQuestionStatistics
 } = require('../src/contracts');
+
+test('validates percentage statistics without converting missing values to zero', () => {
+  assert.deepEqual(normalizeQuestionStatistics({ data: { 301: { correctRatio: 0 }, 302: {}, 303: { correctRatio: 52.4 } } }), {
+    301: { correctRatio: 0, mostWrongAnswer: null },
+    302: { correctRatio: null, mostWrongAnswer: null },
+    303: { correctRatio: 52.4, mostWrongAnswer: null }
+  });
+  for (const ratio of [-1, 101, NaN, Infinity, '', '52', false]) {
+    assert.throws(() => normalizeQuestionStatistics({ data: { 301: { correctRatio: ratio } } }), ContractError);
+  }
+  assert.throws(() => normalizeQuestionStatistics({ data: [] }), ContractError);
+});
+
+test('keeps the site mostWrongAnswer choice including the first option', () => {
+  const result = normalizeQuestionStatistics({ data: {
+    301: { correctRatio: 52, mostWrongAnswer: { choice: '0' } },
+    302: { mostWrongAnswer: { choice: '1,3' } }
+  } });
+  assert.equal(result[301].mostWrongAnswer.choice, '0');
+  assert.equal(result[302].mostWrongAnswer.choice, '1,3');
+});
 
 test('normalizes nested categories', () => {
   const result = normalizeCategories({ data: [{ id: 1, name: '判断推理', children: [{ id: 2, name: '图形推理' }] }] });

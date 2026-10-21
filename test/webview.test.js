@@ -56,3 +56,26 @@ test('all entry starts practice with the parent category and keeps the subject a
     command: 'startExercise', subjectId: 'xingce', keypointId: 10, questionType: '言语理解与表达'
   });
 });
+
+test('solution statistics show the site percentage including zero and explicit missing/failure states', () => {
+  const { context } = loadWebview();
+  for (const [ratio, label] of [[52.4, '52%'], [0, '0%'], [100, '100%'], [0.5, '1%'], [null, '暂无数据']]) {
+    context.solution = { questionStatistics: { correctRatio: ratio } };
+    const html = vm.runInContext('renderSolutionStatistics(solution)', context);
+    assert.match(html, new RegExp(`全站正确率：${label}`));
+  }
+  context.solution = { statisticsStatus: 'failed' };
+  assert.match(vm.runInContext('renderSolutionStatistics(solution)', context), /全站正确率：获取失败/);
+});
+
+test('solution statistics show returned wrong choices as letters without dropping option A', () => {
+  const { context } = loadWebview();
+  for (const [choice, label] of [['0', 'A'], [0, 'A'], ['3', 'D'], ['0,2', 'A、C'], ['<script>', '数据异常'], ['26', '数据异常']]) {
+    context.solution = { questionStatistics: { correctRatio: 52, mostWrongAnswer: { choice } } };
+    assert.match(vm.runInContext('renderSolutionStatistics(solution)', context), new RegExp(`全站正确率：52% · 易错选项：${label}`));
+  }
+  for (const mostWrongAnswer of [null, {}, { choice: '' }]) {
+    context.solution = { questionStatistics: { correctRatio: 52, mostWrongAnswer } };
+    assert.doesNotMatch(vm.runInContext('renderSolutionStatistics(solution)', context), /易错选项/);
+  }
+});

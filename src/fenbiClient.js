@@ -18,6 +18,7 @@ const {
   normalizePaperLabels,
   normalizePapers,
   normalizeQuestionSet,
+  normalizeQuestionStatistics,
   normalizeUnfinishedExercise,
   normalizeUserInfo,
   unwrapData
@@ -396,7 +397,17 @@ class FenbiClient {
     const total = normalized.total || fallbackIds.length;
     if (!questionIds.length) return { items: [], materials: [], total: 0 };
     const payload = await this.request('GET', `https://tiku.fenbi.com/api/${subject.id}/universal/auth/solutions?type=1&questionIds=${encodeURIComponent(questionIds.join(','))}&${CURRENT_API_QUERY}`);
-    return { ...normalizeErrorSolutions(payload, questionIds), total };
+    const result = normalizeErrorSolutions(payload, questionIds);
+    if (subject.answerMode === 'objective') {
+      try {
+        // 官网错题解析通过 question/auth/getSolution 获取统计所需的 requestKey。
+        const metadata = await this.request('GET', `https://tiku.fenbi.com/combine/question/auth/getSolution?questionIds=${encodeURIComponent(questionIds.join(','))}&routecs=${subject.id}&type=1&format=html&${CURRENT_API_QUERY}`);
+        result.items = await this.solutionStatistics(subject.id, result.items, unwrapData(metadata)?.switchVO?.requestKey);
+      } catch {
+        result.items = result.items.map((item) => ({ ...item, statisticsStatus: 'failed' }));
+      }
+    }
+    return { ...result, total };
   }
 
   async paperLabels() {
@@ -472,11 +483,32 @@ class FenbiClient {
       hav: 121
     }));
     const solutionSet = normalizeCombinedQuestionSet(document, 'solutions');
+    if (subject.answerMode === 'objective') {
+      solutionSet.items = await this.solutionStatistics(subject.id, solutionSet.items, unwrapData(metadata)?.switchVO?.requestKey);
+    }
     return {
       ...solutionSet,
       combineKey,
       userAnswers: metadata.data?.userAnswers && typeof metadata.data.userAnswers === 'object' ? metadata.data.userAnswers : {}
     };
+  }
+
+  async solutionStatistics(subjectId, items, requestKey) {
+    const subject = getSubject(subjectId);
+    if (!requestKey) return items.map((item) => ({ ...item, statisticsStatus: 'unavailable' }));
+    try {
+      // 官网 ti 的统计独立于静态解析；correctRatio 已是百分数，不再乘以 100。
+      const payload = await this.request('GET', `https://tiku.fenbi.com/combine/question/getMeta?requestKey=${encodeURIComponent(requestKey)}&routecs=${subject.id}&${CURRENT_API_QUERY}`);
+      const statistics = normalizeQuestionStatistics(payload);
+      return items.map((item) => ({
+        ...item,
+        questionStatistics: statistics[String(item.globalId)] || null,
+        statisticsStatus: 'loaded'
+      }));
+    } catch {
+      // 统计失败不能阻断题干和解析，页面会明确显示获取失败。
+      return items.map((item) => ({ ...item, statisticsStatus: 'failed' }));
+    }
   }
 
   async interviewDocument(subjectId, keypointId) {

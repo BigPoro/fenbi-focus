@@ -392,6 +392,18 @@ function normalizeCombinedQuestionSet(payload, mode = 'questions') {
   };
 }
 
+function normalizeQuestionStatistics(payload) {
+  const data = requireObject(unwrapData(payload), '题目统计');
+  return Object.fromEntries(Object.entries(data).map(([id, item]) => {
+    const source = requireObject(item, '题目统计项');
+    const ratio = source.correctRatio;
+    if (ratio != null && (typeof ratio !== 'number' || !Number.isFinite(ratio) || ratio < 0 || ratio > 100)) {
+      throw new ContractError('题目统计 correctRatio 不是有效的百分数');
+    }
+    return [id, { correctRatio: ratio ?? null, mostWrongAnswer: source.mostWrongAnswer ?? null }];
+  }));
+}
+
 function normalizeCurrentUser(payload) {
   const data = requireObject(unwrapData(payload), '当前用户');
   return {
@@ -470,6 +482,7 @@ module.exports = {
   normalizePaperLabels,
   normalizePapers,
   normalizeQuestionSet,
+  normalizeQuestionStatistics,
   normalizeUnfinishedExercise,
   normalizeUserInfo,
   extractStaticUrl,

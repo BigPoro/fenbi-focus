@@ -674,6 +674,23 @@ function solutionAnswer(solution) {
   return solution?.correctAnswer?.choice == null ? '' : String(solution.correctAnswer.choice);
 }
 
+function renderSolutionStatistics(solution) {
+  const ratio = solution.questionStatistics?.correctRatio;
+  const value = typeof ratio === 'number' && Number.isFinite(ratio) && ratio >= 0 && ratio <= 100
+    ? `${Math.round(ratio)}%`
+    : solution.statisticsStatus === 'failed' ? '获取失败' : '暂无数据';
+  const choice = solution.questionStatistics?.mostWrongAnswer?.choice;
+  let wrongOption = '';
+  if (choice != null && choice !== '') {
+    const indexes = String(choice).split(',');
+    const label = indexes.every((index) => /^\d+$/.test(index) && OPTION_LABELS[Number(index)])
+      ? indexes.map((index) => OPTION_LABELS[Number(index)]).join('、')
+      : '数据异常';
+    wrongOption = ` · 易错选项：${label}`;
+  }
+  return `<p class="muted">全站正确率：${value}${wrongOption}</p>`;
+}
+
 function renderSolution() {
   const solutions = state.solutions?.solutions || [];
   const solution = solutions[state.questionIndex];
@@ -700,7 +717,7 @@ function renderSolution() {
       ${renderHighlightControls(solution)}
       ${!isEssay && !isInterview ? renderReviewOptions(solution, userAnswer, correctAnswer) : ''}
       ${isEssay && userAnswer ? `<section class="my-essay"><h3>我的作答</h3><p>${escapeText(userAnswer)}</p></section>` : ''}
-      <section class="solution-block"><h3>${isInterview ? '参考思路' : '解析'}</h3><div class="rich-text">${sanitizeHtml(solution.solution)}</div></section>
+      <section class="solution-block"><h3>${isInterview ? '参考思路' : '解析'}</h3>${!isEssay && !isInterview ? renderSolutionStatistics(solution) : ''}<div class="rich-text">${sanitizeHtml(solution.solution)}</div></section>
       <button class="secondary full" data-action="copy-note">复制题干，稍后存飞书</button>
     </article>
     ${renderQuestionNav(solutions.length)}`;
