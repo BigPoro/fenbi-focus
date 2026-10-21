@@ -436,21 +436,25 @@ function optionItems(question) {
   return Array.isArray(options) ? options : [];
 }
 
+function renderCategoryRow(category, depth, typeName, label = category.name) {
+  return `<li class="category-item category-level-${Math.min(depth, 3)}">
+      <button class="category-row" data-action="start" data-id="${Number(category.id)}" data-question-type="${escapeText(typeName)}">
+        <span class="category-name">${escapeText(label)}</span>
+        <span class="category-meta">${Number(category.answerCount || 0)}/${Number(category.count || 0)} <i>›</i></span>
+      </button>
+    </li>`;
+}
+
 function renderCategory(category, depth = 0, parentNames = []) {
   const children = Array.isArray(category.children) ? category.children : [];
   const typeName = [...parentNames, category.name].filter(Boolean).join(' / ');
   if (children.length === 0) {
-    return `<li class="category-item category-level-${Math.min(depth, 3)}">
-      <button class="category-row" data-action="start" data-id="${Number(category.id)}" data-question-type="${escapeText(typeName)}">
-        <span class="category-name">${escapeText(category.name)}</span>
-        <span class="category-meta">${Number(category.answerCount || 0)}/${Number(category.count || 0)} <i>›</i></span>
-      </button>
-    </li>`;
+    return renderCategoryRow(category, depth, typeName);
   }
   return `<li class="category-group category-level-${Math.min(depth, 3)}">
     <details ${depth === 0 ? 'open' : ''}>
       <summary><span class="category-name">${escapeText(category.name)}</span><small>${children.length} 项</small></summary>
-      <ul>${children.map((item) => renderCategory(item, depth + 1, [...parentNames, category.name])).join('')}</ul>
+      <ul>${renderCategoryRow(category, depth + 1, typeName, '全部')}${children.map((item) => renderCategory(item, depth + 1, [...parentNames, category.name])).join('')}</ul>
     </details>
   </li>`;
 }

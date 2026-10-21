@@ -2,7 +2,7 @@
   "name": "fenbi-focus",
   "displayName": "公考专注刷题",
   "description": "在 VS Code 中以低干扰方式使用个人粉笔账号刷题，并安全整理错题。",
-  "version": "0.3.47",
+  "version": "0.3.48",
   "publisher": "local-exam-tools",
   "license": "MIT",
   "repository": {
